@@ -72,7 +72,7 @@
 - Developer Mode: download `tv.stremioorigin.app_<version>_arm.ipk` from the [latest release](https://github.com/slvjtr1/origin/releases/latest) and install it with [webOS Dev Manager](https://github.com/webosbrew/dev-manager-desktop).
 
 **Google TV and Android TV 9 and later**
-- In the [Downloader](https://www.aftvnews.com/downloader/) app, enter the code **2141492**: it downloads the latest APK. Or download [`Origin-AndroidTV.apk`](https://github.com/slvjtr1/origin/releases/latest/download/Origin-AndroidTV.apk) and allow installs when Android asks.
+- In the [Downloader](https://www.aftvnews.com/downloader/) app, enter the code **7619746**: it downloads the latest APK. Or download [`Origin-AndroidTV.apk`](https://github.com/slvjtr1/origin/releases/latest/download/Origin-AndroidTV.apk) and allow installs when Android asks.
 
 New versions install from inside the app: **Settings › About**. Install steps and help are also on the [site](https://slvjtr1.github.io/origin/). See [compatibility](docs/compatibility.md).
 

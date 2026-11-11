@@ -15,6 +15,11 @@
   <img alt="Licence GPL-3.0" src="https://img.shields.io/badge/licence-GPL--3.0-1f1d2b">
 </p>
 
+<p align="center">
+  <a href="https://slvjtr1.github.io/origin/promo.mp4"><img src="docs/promo-poster.jpg" width="820" alt="Watch Origin in 24 seconds"></a><br>
+  <sub><a href="https://slvjtr1.github.io/origin/promo.mp4">▶ Watch Origin in 24 seconds</a> (with sound)</sub>
+</p>
+
 <p align="center"><sub>Origin plays what Stremio™ addons offer. Stremio is a trademark of its owner; Origin is independent and unofficial, and is not affiliated with, endorsed by or sponsored by Stremio.</sub></p>
 
 ---

@@ -77,7 +77,7 @@ public final class OriginVideo {
         if (p != null || act == null) return;
         DefaultHttpDataSource.Factory http = new DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(20000).setReadTimeoutMs(30000).setUserAgent("Origin/" + BuildConfig.VERSION_NAME + " (Android TV)");
-        builtPass = wantPass; final boolean pass = builtPass; builtUp = lowRam() ? 0 : wantUp; builtSoft = wantSoft;
+        builtPass = wantPass; final boolean pass = builtPass; builtUp = lowRam() ? 0 : wantUp; builtFx = lowRam() ? 0 : wantFx; builtSoft = wantSoft;
         /* Dolby and DTS: by default the TV's own decoders make them sound (many Google TV sets say they take them as they
            are and then play nothing from their speakers, the film's clock held with them); passed on as they are only
            when Settings › Audio says a sound bar or receiver is there */
@@ -102,16 +102,18 @@ public final class OriginVideo {
         p.setTrackSelectionParameters(p.getTrackSelectionParameters().buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build());
         /* Upscale: the frames through the graphics chip (OriginSharp). Asked before the film is prepared; a player made
            without it never has the extra step in its way */
-        if (builtUp > 0) { try { p.setVideoEffects(java.util.Collections.singletonList(new OriginSharp(builtUp >= 3 ? 1f : builtUp == 2 ? 0.6f : 0.25f))); } catch (Throwable t) { builtUp = 0; } }
+        if (builtUp > 0 || builtFx != 0) { try { p.setVideoEffects(java.util.Collections.singletonList(new OriginSharp(builtUp >= 3 ? 1f : builtUp == 2 ? 0.6f : builtUp == 1 ? 0.25f : -1f, (builtFx & 1) != 0, (builtFx & 2) != 0))); } catch (Throwable t) { builtUp = 0; builtFx = 0; } }
+        soundFx();
         p.setVideoSurfaceView(view);
         p.addListener(new Player.Listener() {
             @Override public void onPlaybackStateChanged(int s) { sync(); }
+            @Override public void onAudioSessionIdChanged(int id) { soundFx(); }
             @Override public void onIsPlayingChanged(boolean b) { sync(); }
             @Override public void onVideoSizeChanged(VideoSize s) { vw = s.width; vh = s.height; video(); }
             @Override public void onTracksChanged(Tracks t) { listTracks(t); video(); }
             @Override public void onPlayerError(PlaybackException e) {
                 int c = e.errorCode;
-                if (builtUp > 0) { plainHere(); return; } /* whatever went wrong with Upscale on: the same film again without it, before anything else is tried */
+                if (builtUp > 0 || builtFx != 0) { plainHere(); return; } /* whatever went wrong with Upscale on: the same film again without it, before anything else is tried */
                 /* the sound refused as it is: again at once, decoded by the TV */
                 /* the device's own sound decoder failed on this film: the same film again at once, its sound decoded by the app */
                 if (!builtPass && !builtSoft && audioFault(e)) { softHere(); return; }
@@ -172,14 +174,44 @@ public final class OriginVideo {
     }
     /* the same film again where it was, without Upscale (an HDR or 4K picture, which it leaves alone; or an error with it on) */
     private static void plainHere() {
-        if (p == null || lastUrl == null || builtUp == 0) return;
-        long at = p.getCurrentPosition(); boolean play = p.getPlayWhenReady(); wantUp = 0;
+        if (p == null || lastUrl == null || (builtUp == 0 && builtFx == 0)) return;
+        long at = p.getCurrentPosition(); boolean play = p.getPlayWhenReady(); wantUp = 0; wantFx = 0;
         p.release(); p = null; ensure(); if (p == null) return;
         p.setMediaItem(item(lastUrl)); p.prepare(); if (at > 0) p.seekTo(at); p.setPlayWhenReady(play);
         st = 1; movedAt = android.os.SystemClock.uptimeMillis(); readyAt = 0;
     }
     private static volatile int wantUp; private static int builtUp;
     public static void upscale(int level) { wantUp = level < 0 ? 0 : level > 3 ? 3 : level; }
+    /* the player's Upscale button: the film goes on where it is, drawn at the new level */
+    public static void upscaleNow(int level) { upscale(level); ui.post(() -> {
+        if (p == null || lastUrl == null || vlc || builtUp == (lowRam() ? 0 : wantUp)) return;
+        long at = p.getCurrentPosition(); boolean play = p.getPlayWhenReady();
+        p.release(); p = null; ensure(); if (p == null) return;
+        p.setMediaItem(item(lastUrl)); p.prepare(); if (at > 0) p.seekTo(at); p.setPlayWhenReady(play);
+        st = 1; movedAt = android.os.SystemClock.uptimeMillis(); readyAt = 0; }); }
+    /* Settings > Picture and sound. The picture's two (See in the dark, Brightness) are drawn by the graphics chip with
+       Upscale's pass; the sound's two work on the decoded sound (never on Dolby or DTS sent out as they are) */
+    private static volatile int wantFx; private static int builtFx; private static volatile boolean wantVoice, wantEven; static volatile boolean lite;
+    public static void picture(int dark, int bright, int voice, int even) { wantFx = (dark != 0 ? 1 : 0) | (bright != 0 ? 2 : 0); wantVoice = voice != 0; wantEven = even != 0; }
+    private static android.media.audiofx.Equalizer eq; private static android.media.audiofx.DynamicsProcessing dyn; private static int fxSid;
+    private static void soundFx() {
+        try { if (eq != null) eq.release(); } catch (Throwable t) { } eq = null;
+        try { if (dyn != null) dyn.release(); } catch (Throwable t) { } dyn = null;
+        if (p == null || builtPass || (!wantVoice && !wantEven)) return;
+        int sid; try { sid = p.getAudioSessionId(); } catch (Throwable t) { return; } if (sid <= 0) return; fxSid = sid;
+        /* Clear voice: the band speech lives in (about 1 to 5 kHz) raised, the rumble under it lowered a little */
+        if (wantVoice) try { eq = new android.media.audiofx.Equalizer(0, sid); short n = eq.getNumberOfBands(); short[] r = eq.getBandLevelRange();
+            for (short b = 0; b < n; b++) { int hz = eq.getCenterFreq(b) / 1000; int mb = hz >= 900 && hz <= 5000 ? 500 : hz < 200 ? -300 : 0; eq.setBandLevel(b, (short) Math.max(r[0], Math.min(r[1], mb))); }
+            eq.setEnabled(true); } catch (Throwable t) { eq = null; }
+        /* Even volume: a compressor over the whole sound (3:1 above -30 dB, slow to let go so it never pumps), its level
+           made up after it, a limiter so nothing clips */
+        if (wantEven && android.os.Build.VERSION.SDK_INT >= 28) try {
+            android.media.audiofx.DynamicsProcessing.Config cfg = new android.media.audiofx.DynamicsProcessing.Config.Builder(android.media.audiofx.DynamicsProcessing.VARIANT_FAVOR_FREQUENCY_RESOLUTION, 2, false, 0, true, 1, false, 0, true).build();
+            dyn = new android.media.audiofx.DynamicsProcessing(0, sid, cfg);
+            dyn.setMbcBandAllChannelsTo(0, new android.media.audiofx.DynamicsProcessing.MbcBand(true, 20000f, 12f, 320f, 3f, -30f, 6f, -85f, 1f, 0f, 8f));
+            dyn.setLimiterAllChannelsTo(new android.media.audiofx.DynamicsProcessing.Limiter(true, true, 0, 1f, 60f, 10f, -2f, 0f));
+            dyn.setEnabled(true); } catch (Throwable t) { dyn = null; }
+    }
     /* the same film again where it was, its sound decoded by the app's own decoders */
     private static void softHere() {
         if (p == null || lastUrl == null) return;
@@ -200,7 +232,7 @@ public final class OriginVideo {
     private static boolean lowRam() {
         if (lowRamIs < 0) { try { android.app.ActivityManager am = (android.app.ActivityManager) act.getSystemService(Context.ACTIVITY_SERVICE); android.app.ActivityManager.MemoryInfo mi = new android.app.ActivityManager.MemoryInfo(); am.getMemoryInfo(mi);
             lowRamIs = am.isLowRamDevice() || mi.totalMem < 1600L * 1024 * 1024 ? 1 : 0; } catch (Throwable t) { lowRamIs = 0; } }
-        return lowRamIs == 1;
+        return lowRamIs == 1 || lite; /* (Reduce for old TVs: the same light playing) */
     }
     private static MediaItem item(String url) {
         MediaItem.Builder mi = new MediaItem.Builder().setUri(url); String u = url.toLowerCase(Locale.ROOT);
@@ -267,7 +299,7 @@ public final class OriginVideo {
         else if (c != null && c.colorTransfer == C.COLOR_TRANSFER_ST2084) h = "HDR10";
         else if (c != null && c.colorTransfer == C.COLOR_TRANSFER_HLG) h = "HLG";
         hdr = h;
-        if (builtUp > 0 && (!"none".equals(h) || f.height > 1088 || f.width > 1920)) ui.post(OriginVideo::plainHere); /* HDR, Dolby Vision and 4K stay exactly as they are */
+        if ((builtUp > 0 || builtFx != 0) && (!"none".equals(h) || f.height > 1088 || f.width > 1920)) ui.post(OriginVideo::plainHere); /* HDR, Dolby Vision and 4K stay exactly as they are */
     }
     /* the display's refresh rate asked for the film's own (0: the TV's usual one again). Android 12 and later: also a
        change that isn't seamless, as the TV's "Match content frame rate" setting allows; Android 11: a seamless one */
@@ -286,12 +318,12 @@ public final class OriginVideo {
        opening (or none), never the last film's end or error (gate; seq: the latest call, so an older one doesn't open it) */
     private static volatile int gate, seq;
     public static void load(String url) {
-        final boolean wp = wantPass; final int my = ++seq, up = wantUp;
+        final boolean wp = wantPass; final int my = ++seq, up = wantUp, fx = wantFx;
         vlc = false; err = ""; st = 1; vw = vh = 0; pos = dur = buf = 0; fps = 0; hdr = ""; tracks = ""; audCur = -1; unsup = 0; gate = 1;
         ui.post(() -> {
             vlcOff(); vlcTried = false;
-            if (p != null && (builtPass != wp || builtUp != (lowRam() ? 0 : up) || builtSoft)) { p.release(); p = null; } /* (a setting changed, or the last film needed the app's decoders: a player made afresh) */
-            wantPass = wp; wantUp = up; wantSoft = false; ensure();
+            if (p != null && (builtPass != wp || builtUp != (lowRam() ? 0 : up) || builtFx != (lowRam() ? 0 : fx) || builtSoft)) { p.release(); p = null; } /* (a setting changed, or the last film needed the app's decoders: a player made afresh) */
+            wantPass = wp; wantUp = up; wantFx = fx; wantSoft = false; ensure(); soundFx();
             if (p == null) { err = "PLAYER_INIT_FAILED"; st = 6; if (seq == my) gate = 0; return; }
             err = ""; st = 1; vw = vh = 0; fps = 0; hdr = ""; tracks = ""; audCur = -1; unsup = 0; view.setVisibility(View.VISIBLE);
             lastUrl = url; movedAt = android.os.SystemClock.uptimeMillis(); readyAt = 0; lastPos = -1;

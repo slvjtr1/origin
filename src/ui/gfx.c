@@ -374,7 +374,8 @@ void gfx_glare_at(float x, float y, float w, float h, float r, float pos, uint32
 void gfx_glare(float x, float y, float w, float h, float r, float pos, uint32_t c) { if (invisible(c) || clipped_out(x, y, w, h)) return; batchOpaque = 0; quad(P_GLARE, 0, x, y, w, h, r, 0, pos, 1, c, c, c, c, 0, 0, 1, 1); }
 void gfx_ring_out(float x, float y, float w, float h, float r, float t, uint32_t c) { gfx_ring(x - t, y - t, w + 2 * t, h + 2 * t, r + t, t, c); }
 float gfx_opacity_now(void) { return curOpac; }
-void gfx_shadow(float x, float y, float w, float h, float r, float blur, uint32_t c) { if (invisible(c) || clipped_out(x - blur, y - blur, w + 2 * blur, h + 2 * blur)) return;
+int gfx_lite; /* Reduce for old TVs: no soft shadows, flat glass */
+void gfx_shadow(float x, float y, float w, float h, float r, float blur, uint32_t c) { if (gfx_lite || invisible(c) || clipped_out(x - blur, y - blur, w + 2 * blur, h + 2 * blur)) return;
   if (!nine(CK_SHADOW, x, y, w, h, r, 0, blur, c, c, c, c)) quad(P_SHAPE, 0, x, y, w, h, r, blur, 0, blur + 1, c, c, c, c, 0, 0, 1, 1); }
 /* the shadow of an opaque box (bx, by, bw, bh, corner radius br) drawn right over it: the part of the shadow the box
    hides is left out, only while nothing fades (a box seen through would show it) */

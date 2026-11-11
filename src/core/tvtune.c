@@ -127,8 +127,15 @@ static void wish(Job *j, int anime) {
       addr(j, "picture", "sharpness", L == 3 ? "8" : L == 2 ? "5" : "3", 0, 50);
       if (L >= 2) add(j, "picture", "edgeEnhancer", "on");
       if (L == 3) add(j, "picture", "realCinema", "on"); } }
-  if (is_on("brightBoost", "false")) { addr(j, "picture", "backlight", "20", 0, 100); add(j, "picture", "energySaving", "off"); }
-  if (is_on("darkSee", "false")) { add(j, "aiPicture", "ai_Brightness", "on"); addr(j, "picture", "brightness", "2", 0, 56); }
+  /* Brightness: the panel's light well up (an OLED's too: its own key), HDR's peak at its highest, the TV's power
+     saving and its automatic dimming out of the way. Only the keys this TV has are changed (see start_job) */
+  if (is_on("brightBoost", "false")) { addr(j, "picture", "backlight", "30", 0, 100); addr(j, "picture", "contrast", "5", 0, 100);
+    add(j, "picture", "energySaving", "off"); add(j, "picture", "peakBrightness", "high"); add(j, "picture", "motionEyeCare", "off"); }
+  /* See in the dark: what hides shadows is the curve, not the level. The gamma's low setting opens the dark half of
+     the picture, HDR's dynamic tone mapping does the same for HDR, the black level is raised a little (not enough to
+     grey it), the TV's AI brightness follows the room, and local dimming is eased so a dark scene is not dimmed further */
+  if (is_on("darkSee", "false")) { add(j, "aiPicture", "ai_Brightness", "on"); addr(j, "picture", "brightness", "4", 0, 58);
+    add(j, "picture", "gamma", "low"); add(j, "picture", "hdrDynamicToneMapping", "on"); add(j, "picture", "dynamicContrast", "low"); add(j, "picture", "localDimming", "low"); }
   if (is_on("voiceClear", "true")) add(j, "sound", "clearVoice", "level2");
   if (is_on("evenVolume", "false")) add(j, "sound", "autoVolume", "on");
 }

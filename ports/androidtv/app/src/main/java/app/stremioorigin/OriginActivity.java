@@ -44,7 +44,15 @@ public class OriginActivity extends SDLActivity {
                scaler makes it full size (four times fewer pixels for the GPU each frame; the film itself stays 4K) */
             try {
                 Point pt = new Point(); getDisplaySize(pt);
-                if (pt.x > 1920 && pt.y > 0) mSurface.getHolder().setFixedSize(1920, Math.round(1920f * pt.y / pt.x));
+                /* Reduce for old TVs (the app leaves its choice in a small file; none yet: on for a device with little memory):
+                   the app drawn at 720p, less than half the pixels of 1080p for the graphics chip each frame */
+                boolean lite = false;
+                try { java.io.File f = new java.io.File(getFilesDir(), "data/lite");
+                    if (f.exists()) { java.io.FileInputStream in = new java.io.FileInputStream(f); lite = in.read() == '1'; in.close(); }
+                    else { android.app.ActivityManager am = (android.app.ActivityManager) getSystemService(ACTIVITY_SERVICE); android.app.ActivityManager.MemoryInfo mi = new android.app.ActivityManager.MemoryInfo(); am.getMemoryInfo(mi); lite = am.isLowRamDevice() || mi.totalMem < 1700L * 1024 * 1024; } } catch (Throwable t) { }
+                OriginVideo.lite = lite;
+                if (lite && pt.x > 1280 && pt.y > 0) mSurface.getHolder().setFixedSize(1280, Math.round(1280f * pt.y / pt.x));
+                else if (pt.x > 1920 && pt.y > 0) mSurface.getHolder().setFixedSize(1920, Math.round(1920f * pt.y / pt.x));
             } catch (Throwable t) { }
         }
         SurfaceView v = new SurfaceView(this);

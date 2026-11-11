@@ -63,6 +63,7 @@ unsigned app_bg_gen(void);
 int app_bg_pending(void);   /* a new backdrop is asked for and on its way */
 void app_glow_kick(void);              /* the phone sent words: Search's glows surge and spring back */             /* bumps each time a new backdrop takes over */
 float app_idle(void);
+int   app_lite(void);            /* Settings (Google TV): Reduce for old TVs */
 int   app_reduce_motion(void);   /* Settings: Reduce motion */
 float app_trailer_idle(void);           /* seconds since a key other than OK (the background trailer's own idleness) */                 /* seconds since the last key */
 int  app_rtl(void);

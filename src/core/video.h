@@ -14,6 +14,7 @@ void   video_unload(void);                   /* releases the decoder now */
 void   video_play(void);
 void   video_pause(void);
 void   video_seek(double sec);
+void   video_upscale_changed(void);          /* Google TV: the Upscale level changed while a film plays (it goes on where it is) */
 double video_time(void);
 double video_duration(void);                 /* 0 while unknown */
 double video_buffered_end(void);             /* seconds buffered ahead (absolute position) */

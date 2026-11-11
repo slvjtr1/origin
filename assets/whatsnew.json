@@ -1,25 +1,25 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "items": [
     {
       "icon": "play",
-      "title": "ORIGIN 1.0",
-      "text": "A media center for your addons, on LG webOS and Google TV: your library, the best stream in one press, and subtitles that stay in sync."
+      "title": "A new player bar",
+      "text": "Three groups of icons: the picture on the left (upscale, picture size), the film in the middle (back, play, forward, with your seek step written on them), sound and subtitles on the right."
     },
     {
-      "icon": "p_src",
-      "title": "A source fails, the next one plays",
-      "text": "When a source does not play, the next best one starts by itself, then a third. If all three fail you choose from them."
+      "icon": "p_subs",
+      "title": "OpenSubtitles Pro, built in",
+      "text": "More subtitles and none of the spam. Choose in Settings: with AI translations, made by people only, or off."
     },
     {
-      "icon": "p_aud",
-      "title": "Sound on every device",
-      "text": "On Google TV the app carries its own decoders for Dolby, DTS and TrueHD: older boxes without them play every film with sound."
+      "icon": "p_asp",
+      "title": "Brightness and See in the dark, stronger",
+      "text": "Dark scenes are opened up properly now, and both work on Google TV too, with Clear voice and Even volume."
     },
     {
-      "icon": "check",
-      "title": "Clean sources, the right episode",
-      "text": "Fake files and sources of another episode are left out, and a torrent pack plays the episode you opened."
+      "icon": "g_speed",
+      "title": "Reduce for old TVs",
+      "text": "Google TV: a lighter app for slow devices. On by itself where memory is short, or a switch in Settings, Appearance."
     }
   ],
   "support": {

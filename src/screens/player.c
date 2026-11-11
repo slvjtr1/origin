@@ -214,6 +214,7 @@ static void af_give_up(void) {
   AF.pick = 1; AF.sel = 0; AF.nextAt = 0; P.failed = 1; P.canNext = 0; char n[8], s[300]; snprintf(n, sizeof n, "%d", AF.n);
   snprintf(s, sizeof s, "%s", AF.n >= 3 ? T("Three sources did not take your request. Choose one to try again, or press Back") : T1("{n} source(s) did not take your request, and no other suits this TV. Choose one to try again, or press Back", "n", n)); set_status(s);
 }
+static double trAltAt; /* when a trailer's sharper stream gives way to its plain file, if it has not shown by then */
 static void fail(const char *t) { fprintf(stderr, "[player] %s | %s %s %s\n", t, P.type, P.id, P.vid); P.failed = 1; video_unload(); P.live = 0;
   P.canNext = P.st.url[0] && strcmp(P.type, "other") && !P.isTrailer; if (P.canNext) best_skip(P.st.url); /* the best of the others comes next */
   if (P.canNext && !AF.pick) { if (strcmp(AF.vid, P.vid)) { af_reset(); snprintf(AF.vid, sizeof AF.vid, "%s", P.vid); }
@@ -924,34 +925,62 @@ void player_chapters(const char *url, const PlayerChapter *list, int n) {
 }
 
 /* ---- buttons ---- */
-static void up_label(char *o, size_t cap) { const char *lv = tvtune_level(is_anime()); if (!strcmp(lv, "off")) snprintf(o, cap, "%s", T(is_anime() ? "Anime upscale off" : "Upscale off")); else snprintf(o, cap, "%s", T1(is_anime() ? "Anime upscale: {l}" : "Upscale: {l}", "l", T(!strcmp(lv, "A") ? "High" : !strcmp(lv, "B") ? "Medium" : "Low"))); }
-static int up_index(void) { const char *lv = tvtune_level(is_anime()); return !strcmp(lv, "A") ? 3 : !strcmp(lv, "B") ? 2 : !strcmp(lv, "C") ? 1 : 0; }
+#ifdef SB_ANDROID
+static const char *gup(void) { const char *u = store_get("gpuUpscale", "off"); return !strcmp(u, "high") ? "A" : !strcmp(u, "medium") ? "B" : !strcmp(u, "low") ? "C" : "off"; }
+#define UP_LEVEL() gup()
+#define UP_ANIME 0
+#else
+#define UP_LEVEL() tvtune_level(is_anime())
+#define UP_ANIME is_anime()
+#endif
+static void up_label(char *o, size_t cap) { const char *lv = UP_LEVEL(); if (!strcmp(lv, "off")) snprintf(o, cap, "%s", T(UP_ANIME ? "Anime upscale off" : "Upscale off")); else snprintf(o, cap, "%s", T1(UP_ANIME ? "Anime upscale: {l}" : "Upscale: {l}", "l", T(!strcmp(lv, "A") ? "High" : !strcmp(lv, "B") ? "Medium" : "Low"))); }
+static int up_index(void) { const char *lv = UP_LEVEL(); return !strcmp(lv, "A") ? 3 : !strcmp(lv, "B") ? 2 : !strcmp(lv, "C") ? 1 : 0; }
 static int btn_index(const char *id);
 static void next_up(void) {
-  tvtune_cycle(is_anime()); int b = btn_index("up"); if (b >= 0) { up_label(P.btns[b].lb, 48); P.btns[b].lw = text_width(P.btns[b].lb, 24, 700, 0) + 22; }
-  if (tvtune_state() == 0) toast(T("Upscale needs Homebrew Channel root on this TV"), 3000, NULL);
+#ifdef SB_ANDROID
+  { static const char *const N[4] = { "off", "low", "medium", "high" }; store_set("gpuUpscale", N[(up_index() + 1) % 4]); video_upscale_changed(); } /* the film goes on where it is, redrawn at the new level */
+#else
+  tvtune_cycle(is_anime()); if (tvtune_state() == 0) toast(T("Upscale needs Homebrew Channel root on this TV"), 3000, NULL);
+#endif
+  int b = btn_index("up"); if (b >= 0) { up_label(P.btns[b].lb, 48); P.btns[b].lw = text_width(P.btns[b].lb, 22, 700, 0); }
+}
+/* The row, three groups, icons only:
+     far left    the picture: upscale, picture size
+     the middle  the film: from the beginning, back, play / pause, forward, next episode
+     far right   what you hear and read: episodes, sources, audio, subtitles
+   The seek step (Settings > Playback) is written inside the back and forward arrows. */
+static int seek_step(void) { int v = atoi(store_get("seekStep", "10")); return v > 0 && v <= 120 ? v : 10; }
+static int up_can(void) {
+#ifdef SB_ANDROID
+  return 1; /* the graphics chip's pass */
+#else
+  return tvtune_state() != 0;
+#endif
 }
 static void build_btns(void) {
-  const char *fid = P.nbtn && P.bIdx < P.nbtn ? P.btns[P.bIdx].id : NULL; /* the focus stays on the same button when the row changes */
-  P.nbtn = 0; int i = 0;
+  const char *fid = P.nbtn && P.bIdx < P.nbtn ? P.btns[P.bIdx].id : "pp"; /* the focus stays on the same button when the row changes; first on play */
+  P.nbtn = 0; int i = 0, nl, nm;
   #define B(ID, IC, LB, BIG) do { if (i >= MAXBTN) break; P.btns[i].id = ID; P.btns[i].icon = IC; snprintf(P.btns[i].lb, 48, "%s", LB); P.btns[i].big = BIG; P.btns[i].nx = 0; i++; } while (0)
-  B("pp", "p_pause", "", 1); if (!P.isTrailer && P.next.has) { B("nxt", "p_next", T("Next episode"), 0); P.btns[i - 1].nx = 1; }
-  if (!P.isTrailer) { B("beg", "restart", T("Play from the beginning"), 0); P.btns[i - 1].nx = 1; } /* films and episodes alike */
-  P.nL = i;
-  if (!P.isTrailer && episodic() && P.videos && cJSON_GetArraySize(P.videos)) B("eps", "p_eps", T("Episodes"), 0);
-  if (!P.isTrailer) B("src", "p_src", T("Sources"), 0);
-  if (P.isTrailer) { if (trSubsN) B("cc", "p_subs", T("Subtitles"), 0); } /* a trailer's captions: one press on, one off */
-  else B("subs", "p_subs", T("Subtitles"), 0);
-  if (!P.isTrailer) B("aud", "p_aud", T("Audio"), 0);
-  if (!P.isTrailer && tvtune_state() != 0) { char ul[48]; up_label(ul, sizeof ul); B("up", "g_spark", ul, 0); } /* the TV's upscale, one press per level (hidden where the TV can't be tuned) */
-  const char *am = !strcmp(P.aspect, "fill") ? "Fill the screen" : !strcmp(P.aspect, "zoom") ? "Zoom" : "Original"; B("asp", "p_asp", T(am), 0);
+  if (!P.isTrailer && up_can()) { char ul[48]; up_label(ul, sizeof ul); B("up", "p_up", ul, 0); }
+  { const char *am = !strcmp(P.aspect, "fill") ? "Fill the screen" : !strcmp(P.aspect, "zoom") ? "Zoom" : "Original"; B("asp", "p_asp", T(am), 0); }
+  nl = i;
+  if (!P.isTrailer) B("beg", "p_beg", "", 0);
+  B("rw", "p_rw", "", 0); B("pp", "p_pause", "", 1); B("ff", "p_ff", "", 0);
+  if (!P.isTrailer && P.next.has) B("nxt", "p_next", "", 0);
+  nm = i;
+  if (!P.isTrailer && episodic() && P.videos && cJSON_GetArraySize(P.videos)) B("eps", "p_eps", "", 0);
+  if (!P.isTrailer) B("src", "p_src", "", 0);
+  if (!P.isTrailer) B("aud", "p_aud", "", 0);
+  if (P.isTrailer) { if (trSubsN) B("cc", "p_subs", "", 0); } /* a trailer's captions: one press on, one off */
+  else B("subs", "p_subs", "", 0);
   #undef B
-  P.nbtn = i; if (P.bIdx >= i) P.bIdx = 0; if (fid) for (int k = 0; k < i; k++) if (!strcmp(P.btns[k].id, fid)) P.bIdx = k;
-  for (int k = 0; k < i; k++) { P.btns[k].lw = P.btns[k].lb[0] ? text_width(P.btns[k].lb, 24, 700, 0) + 22 : 0; P.btns[k].w = P.btns[k].big ? 94 : 78; }
-  /* where they sit before any slides aside (76 / 92 plus a 1 px edge): the left group from the left, the right group from the right */
-  float x = 72; for (int k = 0; k < P.nL; k++) { if (P.btns[k].nx) x += 8; P.btns[k].x0 = x; P.btns[k].y = SB_H - 54 - 94 + (94 - P.btns[k].w) / 2; x += P.btns[k].w + (P.btns[k].big ? 20 : 0); }
-  x = SB_W - 72; for (int k = i - 1; k >= P.nL; k--) { x -= P.btns[k].w; P.btns[k].x0 = x; P.btns[k].y = SB_H - 54 - 94 + 8; x -= 18; }
-  for (int k = 0; k < i; k++) { P.btns[k].x = P.btns[k].x0 + P.btns[k].dx.v; }
+  P.nbtn = i; P.nL = nl; P.bIdx = 0; for (int k = 0; k < i; k++) if (!strcmp(P.btns[k].id, "pp")) P.bIdx = k; if (fid) for (int k = 0; k < i; k++) if (!strcmp(P.btns[k].id, fid)) P.bIdx = k;
+  for (int k = 0; k < i; k++) { P.btns[k].lw = P.btns[k].lb[0] ? text_width(P.btns[k].lb, 22, 700, 0) : 0; P.btns[k].w = P.btns[k].big ? 98 : 78; }
+  const float G = 16, by = SB_H - 54 - 98;
+  float x = 72; for (int k = 0; k < nl; k++) { P.btns[k].x0 = x; x += P.btns[k].w + G; }
+  float mw = 0; for (int k = nl; k < nm; k++) mw += P.btns[k].w + (k > nl ? G : 0); x = roundf(SB_W / 2 - mw / 2); for (int k = nl; k < nm; k++) { P.btns[k].x0 = x; x += P.btns[k].w + G; }
+  x = SB_W - 72; for (int k = i - 1; k >= nm; k--) { x -= P.btns[k].w; P.btns[k].x0 = x; x -= G; }
+  for (int k = 0; k < i; k++) { P.btns[k].y = by + (98 - P.btns[k].w) / 2; P.btns[k].x = P.btns[k].x0; }
 }
 static int btn_index(const char *id) { for (int i = 0; i < P.nbtn; i++) if (!strcmp(P.btns[i].id, id)) return i; return -1; }
 
@@ -959,7 +988,7 @@ static int btn_index(const char *id) { for (int i = 0; i < P.nbtn; i++) if (!str
 static void arm_hide(void) { P.hideAt = now_() + 5; }
 static void chips_in(void);
 static void show_osd(int keepFocus) {
-  if (P.mode == 0) { P.mode = 1; if (!keepFocus) { P.row = 0; P.bIdx = 0; } }
+  if (P.mode == 0) { P.mode = 1; if (!keepFocus) { P.row = 0; int b = btn_index("pp"); P.bIdx = b < 0 ? 0 : b; } }
   int was = P.osd; P.skm = 0; P.osd = 1; arm_hide();
   if (!was) chips_in(); /* the info chips come in again, one after the other */
 }
@@ -968,7 +997,7 @@ static void toggle(void) { if (paused()) video_play(); else { video_pause(); sav
 
 /* ---- seeking: presses add up and commit 1.2 s after the last one ---- */
 static void seek_by(int dir) {
-  double d = dur(); if (d <= 0) return; double n = now_(); int step = atoi(store_get("seekStep", "10")); if (!step) step = 10;
+  double d = dur(); if (d <= 0) return; double n = now_(); int step = seek_step();
   P.rep = (n - P.lastKeyAt < 0.4 && dir == P.seekDir) ? P.rep + 1 : 0; P.lastKeyAt = n; P.seekDir = dir; step *= P.rep < 4 ? 1 : P.rep < 10 ? 3 : 6;
   double base = P.seekT >= 0 ? P.seekT : video_time(); P.seekT = base + dir * step; if (P.seekT < 0) P.seekT = 0; if (P.seekT > d - 1) P.seekT = d - 1;
   if (P.mode == 0) P.skm = 1; else arm_hide();
@@ -1006,7 +1035,7 @@ static void next_aspect(void) {
   snprintf(P.aspect, sizeof P.aspect, "%s", A[n]); store_set(key, P.aspect); apply_aspect();
   /* paused: the TV shows the new size with its next frame, when play resumes (asking for the same frame again was a
      seek: the stream buffered, a trailer jumped back) */
-  int b = btn_index("asp"); if (b >= 0) { snprintf(P.btns[b].lb, 48, "%s", T(N[n])); P.btns[b].lw = text_width(P.btns[b].lb, 24, 700, 0) + 22; } /* the button names the mode it is in */
+  int b = btn_index("asp"); if (b >= 0) { snprintf(P.btns[b].lb, 48, "%s", T(N[n])); P.btns[b].lw = text_width(P.btns[b].lb, 22, 700, 0); } /* the button names the mode it is in */
 }
 
 /* ---- prompts: skip intro / recap, the credits card ---- */
@@ -1288,8 +1317,8 @@ static void tray_data(void) {
       if (!P.isTrailer) { if (!P.embKnown && !P.nEmb) { col_add(c1, 1); col_add(c1, 1); } /* the file's head is still being read */ else if (!P.nEmb) { x = col_add(c1, 0); snprintf(x->lb, 200, "%s", T("None in this file")); } else for (int i = 0; i < P.nEmb; i++) { x = col_add(c1, 4); emb_label(i, x->lb, 200); x->i = P.emb[i].idx; char k[16]; snprintf(k, sizeof k, "emb:%d", P.emb[i].idx); x->on = !strcmp(P.curSub, k); x->spin = x->on && SL.wait; snprintf(x->u, 1024, "%s", k); } }
       /* the built-in OpenSubtitles list (the addons' are in their own tab) */
       int onExt = sub_row(1, P.ext, P.nExt);
-      for (int i = 0; i < P.nExt; i++) { int same = 0; for (int j = 0; j < P.nExt; j++) if (!strcmp(P.ext[j].lang, P.ext[i].lang)) same++; x = col_add(c2, 4); if (same > 1) snprintf(x->lb, 200, "%s %d", T(P.ext[i].name), P.ext[i].n); /* the page's two spaces show as one */ else snprintf(x->lb, 200, "%s", T(P.ext[i].name)); x->on = i == onExt; x->spin = x->on && SL.wait; x->ls = 1; x->i = i; snprintf(x->u, 1024, "%s", P.ext[i].url); }
-      if (!c2->n) { if (P.extLoading && !P.isTrailer) { col_add(c2, 1); col_add(c2, 1); col_add(c2, 1); } else { x = col_add(c2, 0); snprintf(x->lb, 200, "%s", T("None found")); } }
+      for (int i = 0; i < P.nExt; i++) { int same = 0; for (int j = 0; j < P.nExt; j++) if (!strcmp(P.ext[j].lang, P.ext[i].lang)) same++; x = col_add(c2, 4); if (same > 1) snprintf(x->lb, 200, "%s %d", T(P.ext[i].name), P.ext[i].n); /* the page's two spaces show as one */ else snprintf(x->lb, 200, "%s", T(P.ext[i].name)); if (P.ext[i].label[0]) { size_t l = strlen(x->lb); snprintf(x->lb + l, 200 - l, "  \xc2\xb7  %s", T("AI translated")); } x->on = i == onExt; x->spin = x->on && SL.wait; x->ls = 1; x->i = i; snprintf(x->u, 1024, "%s", P.ext[i].url); }
+      if (!c2->n) { if (P.extLoading && !P.isTrailer) { col_add(c2, 1); col_add(c2, 1); col_add(c2, 1); } else { x = col_add(c2, 0); snprintf(x->lb, 200, "%s", T(!P.isTrailer && !subs_os_mode() ? "Turned off in Settings" : "None found")); } }
     } else {
       /* the addons' tab: their languages (the one you read first, then by name), and the chosen language's subtitles
          from every addon, each with its addon's name */
@@ -1511,7 +1540,7 @@ static void dly_key(int k) {
   else if (k == K_UP || k == K_DOWN) nudge_start(&P.nudge, k);
 }
 static void act(const char *id) {
-  if (!strcmp(id, "pp")) toggle(); else if (!strcmp(id, "beg")) from_start(); else if (!strcmp(id, "asp")) next_aspect(); else if (!strcmp(id, "up")) next_up(); else if (!strcmp(id, "nxt")) next_auto(); else if (!strcmp(id, "cc")) cc_toggle();
+  if (!strcmp(id, "pp")) toggle(); else if (!strcmp(id, "rw")) seek_by(-1); else if (!strcmp(id, "ff")) seek_by(1); else if (!strcmp(id, "beg")) from_start(); else if (!strcmp(id, "asp")) next_aspect(); else if (!strcmp(id, "up")) next_up(); else if (!strcmp(id, "nxt")) next_auto(); else if (!strcmp(id, "cc")) cc_toggle();
   else open_tray(!strcmp(id, "eps") ? 1 : !strcmp(id, "src") ? 2 : !strcmp(id, "aud") ? 3 : 4);
   arm_hide();
 }
@@ -1712,7 +1741,7 @@ static void on_p2p(void *ud, const char *url, const char *err, uint64_t size) {
 static void on_yt(const Trailer *t, const char *err, void *ud) {
   if (!P.open || P.closing || (unsigned)(uintptr_t)ud != p2pTok) return; P.resolving = 0; P.ytTok = 0;
   if (!t) { fail(T("Couldn’t play this YouTube video")); fprintf(stderr, "[player] YouTube: %s\n", err ? err : "?"); return; }
-  snprintf(P.url, sizeof P.url, "%s", t->url); snprintf(P.alt, sizeof P.alt, "%s", t->alt); start_video();
+  snprintf(P.url, sizeof P.url, "%s", t->url); snprintf(P.alt, sizeof P.alt, "%s", t->alt); trAltAt = t->alt[0] ? now_() + 9 : 0; start_video();
 }
 static void play_stream(const Stream *s, const char *vid, double startAt) {
   if (!s->url[0]) { if (s->ext[0]) app_open_external(s->ext, s->name); return; } /* a page to open elsewhere: never played here */
@@ -1908,13 +1937,13 @@ static void css(void) {
 static void foc_update(void) {
   int fi = P.bIdx; if (P.mode == 2 && P.tray.kind) { int ak = P.tray.kind < 0 ? -P.tray.kind : P.tray.kind; int b = btn_index(ak == 1 || ak == 5 ? "eps" : ak == 2 ? "src" : ak == 3 ? "aud" : "subs"); if (b >= 0) fi = b; }
   if (fi >= P.nbtn) fi = P.nbtn - 1; if (fi < 0) return;
-  /* the focused button opens into a pill with its name: the others slide aside, the pill and the name follow (0.32 s) */
+  /* the lit button glides under the focus; a button that cycles (upscale, picture size) shows its state in a small note above it */
   int show = P.live && ((P.mode == 1 && P.row == 0) || P.mode == 2); float lw = show && P.btns[fi].lb[0] ? P.btns[fi].lw : 0;
-  for (int k = 0; k < P.nbtn; k++) { float dx = 0; if (fi < P.nL && k < P.nL && k > fi) dx = lw; if (fi >= P.nL && k >= P.nL && k <= fi) dx = -lw; mo_to(&P.btns[k].dx, dx, .32f, C_OUT, 0); }
-  float x = P.btns[fi].x0 + (fi >= P.nL ? -lw : 0), y = P.btns[fi].y, sz = P.btns[fi].w / 76;
-  float fd = P.focSeen && fabsf(x - P.focX.to) > 260 ? .42f : .32f; /* across the gap between the two groups: the same glide, a little longer (never a jump) */
-  if (!P.focSeen) { mo_set(&P.focX, x); mo_set(&P.focY, y); mo_set(&P.focW, (76 + lw) * sz); mo_set(&P.focH, 76 * sz); }
-  else { mo_to(&P.focX, x, fd, C_OUT, 0); mo_to(&P.focY, y, fd, C_OUT, 0); mo_to(&P.focW, (76 + lw) * sz, fd, C_OUT, 0); mo_to(&P.focH, 76 * sz, fd, C_OUT, 0); }
+  for (int k = 0; k < P.nbtn; k++) mo_to(&P.btns[k].dx, 0, .2f, C_OUT, 0);
+  float x = P.btns[fi].x0, y = P.btns[fi].y, w = P.btns[fi].w;
+  float fd = P.focSeen && fabsf(x - P.focX.to) > 260 ? .42f : .32f; /* across the gap between two groups: the same glide, a little longer (never a jump) */
+  if (!P.focSeen) { mo_set(&P.focX, x); mo_set(&P.focY, y); mo_set(&P.focW, w); mo_set(&P.focH, w); }
+  else { mo_to(&P.focX, x, fd, C_OUT, 0); mo_to(&P.focY, y, fd, C_OUT, 0); mo_to(&P.focW, w, fd, C_OUT, 0); mo_to(&P.focH, w, fd, C_OUT, 0); }
   P.focSeen = 1; mo_to(&P.focA, show ? 1 : 0, .18f, C_EASE, 0);
   if (strcmp(P.tip, P.btns[fi].lb)) { snprintf(P.tip, sizeof P.tip, "%s", P.btns[fi].lb); P.tipAt = now_(); } /* a new name: its entrance again */
   mo_to(&P.tipA, lw > 0 ? 1 : 0, .14f, C_EASE, 0);
@@ -1952,6 +1981,8 @@ void player_tick(float dt) {
   if (P.dts.deferUntil) dts_defer_tick();
   if (vs == VID_ERROR && !P.failed && P.started && P.isP2p && !P.p2pRetried && p2p_moved_recently()) { /* the torrent's storage moved (a USB drive pulled out): the same stream once more, same moment */
     P.p2pRetried = 1; P.startAt = P.lastPos > 0 ? P.lastPos : 0; P.didResume = 0; P.live = 0; fprintf(stderr, "[player] stream error after the torrent storage moved: again at %.0f s\n", P.startAt); video_load(P.url); vs = video_state(); }
+  /* a trailer's sharp stream that has shown nothing after 9 s: its plain file instead (never a long wait for a trailer) */
+  if (P.isTrailer && trAltAt && P.alt[0] && !P.altTried && !P.failed) { if (P.live) trAltAt = 0; else if (now_() > trAltAt) { trAltAt = 0; P.altTried = 1; fprintf(stderr, "[player] the trailer's sharp stream is slow: its plain file\n"); video_load(P.alt); } }
   if (vs == VID_ERROR && !P.failed && P.started) { if (P.alt[0] && !P.altTried) { P.altTried = 1; fprintf(stderr, "[player] error, the fallback URL\n"); video_load(P.alt); } else { if (!P.errAt) P.errAt = now_(); if (!P.sizeTok || P.sizeAns || now_() - P.errAt > 4) fail(fail_reason()); } } /* the first URL failed: the same file the other way; the reason waits for the server's answer (4 s at most) */
   if (P.nx.tok && !P.nx.done && now_() >= P.nx.until) nx_finish();
   if (P.metaRetryAt && now_() >= P.metaRetryAt) { P.metaRetryAt = 0; if (!P.next.has || !P.videos) ask_meta(); }
@@ -2267,18 +2298,22 @@ static void draw_osd(void) {
     float fa = P.focA.v * fminf(1, kf(P.focFadeAt, .24f, C_EASE, 0));
     { static float sv, lx; lglass_stretch(&sv, &lx, P.focX.v, app_dt()); /* the lit button: accent glass that stretches as it glides and settles round */
       if (fa > 0.001f) { float w0 = P.focW.v, h0 = P.focH.v, sw = w0 * (1 + 0.16f * sv), sh = h0 * (1 - 0.08f * sv), px = P.focX.v + w0 / 2 - sw / 2, py = P.focY.v + h0 / 2 - sh / 2; lglass_accent(px, py, sw, sh, sh / 2, fa); } }
-    if (P.tipA.v > 0.001f && P.tip[0]) { float ta = P.tipA.v * (P.tipAt && now_() - P.tipAt < .08 ? 0 : fminf(1, kf(P.tipAt, .3f, C_EASE, .08f)));
-      int up = fi >= 0 && !strcmp(P.btns[fi].id, "up"), cyc = fi >= 0 && (up || !strcmp(P.btns[fi].id, "asp")) && !strcmp(P.tip, P.btns[fi].lb); /* a button that cycles: one dot per choice under its name, the lit one gliding on each press */
-      if (cyc) { /* the name and its dots centred together in the pill's open part, whatever the name's length */
-        float cx = P.focX.v + 70 + (P.focW.v - 70 - 24) / 2; int ai = up ? up_index() : !strcmp(P.aspect, "fill") ? 1 : !strcmp(P.aspect, "zoom") ? 2 : 0;
-        text_draw(P.tip, cx, P.focY.v + 38 - text_line_height(24) / 2.0f - 8, 24, 700, col_alpha(ACC_FG, ta), 0, 0, ALIGN_CENTER);
-        cycle_dots(up ? 4 : 0, up ? 4 : 3, ai, cx, P.focY.v + 38 + text_line_height(24) / 2.0f + 2, 11, 2.5f, col_alpha(ACC_FG, .3f * ta), col_alpha(ACC_FG, ta), 0); }
-      else text_draw(P.tip, P.focX.v + 70, P.focY.v + 38 - text_line_height(24) / 2.0f, 24, 700, col_alpha(ACC_FG, ta), 0, 0, ALIGN_LEFT); }
-    for (int i = 0; i < P.nbtn; i++) { float sz = P.btns[i].w, x = P.btns[i].x, y = P.btns[i].y; int f = i == fi;
+    if (P.tipA.v > 0.001f && P.tip[0] && fi >= 0) { float ta = P.tipA.v * (P.tipAt && now_() - P.tipAt < .08 ? 0 : fminf(1, kf(P.tipAt, .3f, C_EASE, .08f)));
+      /* the note above a button that cycles: its state in words, one dot per choice under them, the lit one gliding on each press */
+      int up = !strcmp(P.btns[fi].id, "up"); float tw = text_width(P.tip, 22, 700, 0), w = fmaxf(tw, 90) + 56, h = 72, x = P.btns[P.nL > 0 ? P.nL - 1 : 0].x0 + P.btns[P.nL > 0 ? P.nL - 1 : 0].w + 18 - 10 * (1 - ta), y = P.btns[fi].y + P.btns[fi].w / 2 - h / 2; /* beside its group, clear of the bar */
+      int ai = up ? up_index() : !strcmp(P.aspect, "fill") ? 1 : !strcmp(P.aspect, "zoom") ? 2 : 0;
+      gfx_opacity_push(ta); lglass_shell(x, y, w, h, 26, TINT(16, 16, 24, 150), 0.85f);
+      text_draw(P.tip, x + w / 2, y + 12, 22, 700, WHITE_A(240), 0, 0, ALIGN_CENTER);
+      cycle_dots(up ? 4 : 0, up ? 4 : 3, ai, x + w / 2, y + h - 18, 11, 2.5f, WHITE_A(70), WHITE_A(240), 0); gfx_opacity_pop(); }
+    for (int i = 0; i < P.nbtn; i++) { float sz = P.btns[i].w, x = P.btns[i].x, y = P.btns[i].y; int f = i == fi; const char *id = P.btns[i].id;
       if (!f) lglass_shell(x, y, sz, sz, sz / 2, TINT(16, 16, 24, 90), 0.85f); /* glass at rest */
-      float isz = P.btns[i].big ? 48 : 34, ix = x + sz / 2 - isz / 2, iy = y + sz / 2 - isz / 2; uint32_t ic = f ? ACC_FG : WHITE_A(255);
-      if (!strcmp(P.btns[i].id, "cc")) { cc_icon(ix, iy, isz, ic, f ? ACC : RGBA(30, 30, 34, 235)); continue; }
-      icon_draw(!strcmp(P.btns[i].id, "pp") ? (paused() ? "p_play" : "p_pause") : P.btns[i].icon, ix, iy, isz, ic); }
+      int seek = !strcmp(id, "rw") || !strcmp(id, "ff");
+      float isz = P.btns[i].big ? 50 : seek ? 46 : 34, ix = x + sz / 2 - isz / 2, iy = y + sz / 2 - isz / 2; uint32_t ic = f ? ACC_FG : WHITE_A(255);
+      if (!strcmp(id, "cc")) { cc_icon(ix, iy, isz, ic, f ? ACC : RGBA(30, 30, 34, 235)); continue; }
+      if (seek) { static TMemo nw[2]; static char nt[2][8]; int q = id[0] == 'f'; char n[8]; snprintf(n, sizeof n, "%d", seek_step()); if (strcmp(n, nt[q])) { snprintf(nt[q], 8, "%s", n); memset(&nw[q], 0, sizeof nw[q]); }
+        icon_draw(P.btns[i].icon, ix, iy - 2, isz, ic); (void)nw; /* the arrow, its seconds written inside */
+        text_draw(n, x + sz / 2, y + sz / 2 + isz * (13.0f / 24 - .5f) - 2 - text_line_height(14) / 2.0f, 14, 800, ic, 0, 0, ALIGN_CENTER); continue; }
+      icon_draw(!strcmp(id, "pp") ? (paused() ? "p_play" : "p_pause") : P.btns[i].icon, ix, iy, isz, ic); }
     gfx_offset_pop(); gfx_opacity_pop(); }
   /* the prompts: the skip pill, the credits buttons, the next-up card */
   PG.prompt = 0; const PPrompt *pr = P.prompt.k ? &P.prompt : &P.shown;

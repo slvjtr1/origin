@@ -7,6 +7,11 @@
 #include <stddef.h>
 /* the local address for url with reqHdrs / respHdrs ("Name: value" lines); 0 when the proxy cannot start (then url) */
 int hproxy_url(const char *url, const char *reqHdrs, const char *respHdrs, char *out, size_t cap);
+/* a small text the app made (a manifest), given a local address ending in name; the last four are kept. 0: no proxy */
+/* a YouTube picture file and its sound file (each one piece, its header ending at initEnd, its index at ix0..ix1) as
+   one local HLS address; 0 when it cannot be made */
+int hproxy_yt(const char *vurl, long vInitEnd, long vIx0, long vIx1, const char *aurl, long aInitEnd, long aIx0, long aIx1, const char *codecs, int w, int h, double bw, char *out, size_t cap);
+int hproxy_text(const char *body, const char *type, const char *name, char *out, size_t cap);
 
 /* A file whose only sound the TV can't decode, or whose picture is Dolby Vision profile 7, converted on this device
    (libsbdts: video copied, a profile 7 picture as 8.1, the sound as Dolby Digital or as it is) and served as local HLS: /h/<id>/index.m3u8 and /h/<id>/<n>.ts, or, for a file without a keyframe index,

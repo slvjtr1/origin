@@ -302,10 +302,12 @@ static void rank(SubSync *j) {
 static void by_hash(SubSync *j) {
   SubQuery *q = &j->q; char ex[600] = "", n[32]; addon_extra_add(ex, sizeof ex, "videoHash", q->hash);
   if (q->size > 0) { snprintf(n, sizeof n, "%.0f", q->size); addon_extra_add(ex, sizeof ex, "videoSize", n); }
-  char url[2400]; addon_url(url, sizeof url, "https://opensubtitles-v3.strem.io", "subtitles", q->type, q->vid, ex);
-  size_t len = 0; unsigned char *b = fetch(j, url, 2u << 20, &len); if (!b) return;
+  char url[2400], base[440]; size_t len = 0; unsigned char *b = NULL;
+  if (subs_os_base(base, sizeof base)) { addon_url(url, sizeof url, base, "subtitles", q->type, q->vid, ex); b = fetch(j, url, 2u << 20, &len); } /* the Pro service first, the standard one when it is away */
+  if (!b) { addon_url(url, sizeof url, "https://opensubtitles-v3.strem.io", "subtitles", q->type, q->vid, ex); b = fetch(j, url, 2u << 20, &len); } if (!b) return;
   cJSON *js = cJSON_ParseWithLength((const char *)b, len); free(b); const cJSON *arr = js_arr(js, "subtitles"), *e; int found = 0;
   if (arr) cJSON_ArrayForEach(e, arr) { if (found >= 32) break; SubEntry se; memset(&se, 0, sizeof se); subs_entry_facts(&se, e); const char *u = js_str(e, "url", NULL);
+    if (!se.hm && !strcasecmp(js_str(e, "moviehash", ""), q->hash)) se.hm = 1; /* (the Pro service names the hash it matched) */
     if (!se.hm || !u || strlen(u) >= sizeof se.url) continue;
     SyncRef r; memset(&r, 0, sizeof r); snprintf(r.url, sizeof r.url, "%s", u); subs_lang_canon(js_str(e, "lang", ""), r.lang, sizeof r.lang); snprintf(r.rel, sizeof r.rel, "%s", se.rel);
     snprintf(r.from, sizeof r.from, "OpenSubtitles"); r.hm = 1; r.fps = se.fps; cand_add(j, &r); found++; }

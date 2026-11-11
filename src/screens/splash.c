@@ -18,7 +18,7 @@
    as it fades in, and the mark: the circle settling from 0.96, then the play, then
    ORIGIN as its letters close up, still until Home is complete; leaving, it grows a touch and fades. Drawn, no
    picture to load. */
-static int on, waitHome, gone; static float outS; static Orbs orbs; static double t0, cap, signedAt; static Timer1 out; 
+static int on, waitHome, gone; static float outS; static Orbs orbs; static double t0, cap, signedAt; static Timer1 out; static int held; static double heldAt;
 #define MIN_UP 0.9  /* the entrance has room to finish */
 /* ready = the first two rows' visible posters are in, the hero text is set and the backdrop is up:
    Home is revealed complete, never with empty cards; 2.5 s at most (a slow network), 9 s right after signing in (nothing cached yet) */
@@ -45,6 +45,15 @@ void splash_tick(float dt) {
 void splash_draw(void) {
   if (!on) return;
   float lv = gone ? ease_apply(EASE_CSS_EASE, timer_x(&out)) : 0, a = 1 - lv; gfx_opacity_push(a);
+  /* the mark's two pictures are part of the app: asked for ahead of everything else, and the entrance waits for both
+     (a few frames) so it is never shown half made: no play without its diamond, no name without its mark */
+  static char du[1100], pu[1100]; if (!du[0]) { snprintf(du, sizeof du, "file://%s/mark_diamond.png", plat_asset_dir()); snprintf(pu, sizeof pu, "file://%s/mark_play.png", plat_asset_dir()); }
+  int classic = !strcmp(store_get("appIcon", "origin"), "classic"); float asp; GLuint td = 0, tp = 0;
+  if (!classic && signedAt <= 0) { static int asked; if (!asked) { asked = 1; img_prefetch_pri(du, 512, 512); img_prefetch_pri(pu, 512, 512); img_urgent(du, 512, 512); img_urgent(pu, 512, 512); }
+    td = img_get(du, 512, 512, &asp); tp = img_get(pu, 512, 512, &asp);
+    if ((!td || !tp) && !gone && !img_failed(du) && !img_failed(pu) && app_now() - t0 < 3.0) { if (!held) heldAt = app_now(); held = 1; gfx_rect(0, 0, SB_W, SB_H, PAGE); gfx_opacity_pop(); return; }
+    if (held) { held = 0; t0 += app_now() - heldAt; } /* the entrance starts now, whole */
+    if (!td || !tp) classic = 1; } /* a picture that cannot be read: the drawn mark, complete */
   float t = (float)(app_now() - t0), cx = SB_W / 2, cy = SB_H / 2 - 40, R = 118;
   gfx_rect(0, 0, SB_W, SB_H, PAGE);
   if (signedAt > 0) { login_backdrop_draw(); login_loading_draw(signedAt, 1); gfx_opacity_pop(); return; } /* right after signing in: the same loading carries on, no mark */
@@ -53,11 +62,10 @@ void splash_draw(void) {
   float k = ease_apply(EASE_OUT, (t - 0.05f) / 0.7f), kp = ease_apply(EASE_OUT, (t - 0.3f) / 0.5f), kt = ease_apply(EASE_OUT, (t - 0.45f) / 0.7f);
   float s = 0.96f + 0.04f * k;
   if (gone) { s = outS + (1.05f - outS) * lv; } else outS = s;
-  int classic = !strcmp(store_get("appIcon", "origin"), "classic"); float below = R; /* Settings > Appearance > App icon */
+  float below = R; /* Settings > Appearance > App icon */
   gfx_scale_push(s, s, cx, cy);
   if (!classic) { /* the diamond (its gradient and edge, a picture), then the play with its shadow */
-    static char du[1100], pu[1100]; if (!du[0]) { snprintf(du, sizeof du, "file://%s/mark_diamond.png", plat_asset_dir()); snprintf(pu, sizeof pu, "file://%s/mark_play.png", plat_asset_dir()); }
-    float D = 2 * R * 1.3f, asp; GLuint td = img_get(du, 512, 512, &asp), tp = img_get(pu, 512, 512, &asp); below = D / 2;
+    float D = 2 * R * 1.3f; below = D / 2;
     gfx_opacity_push(k); if (td) gfx_image(td, cx - D / 2, cy - D / 2, D, D, 0, WHITE_A(255), 0, 0, 1, 1); gfx_opacity_pop();
     gfx_opacity_push(kp); if (tp) gfx_image(tp, cx - D / 2 + 6 * (1 - kp), cy - D / 2, D, D, 0, WHITE_A(255), 0, 0, 1, 1); gfx_opacity_pop();
   } else {

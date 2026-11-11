@@ -49,6 +49,8 @@ static const Opt OO[] = { { "true", "On" }, { "false", "Off" } };
 static const Opt ADO[] = { { "true", "On" }, { "false", "Off on this TV" }, { "__remove", "Remove addon" } }; /* an addon: OK lists them; Left / Right only on and off */
 static const Opt SVOL[] = { { "10", "10%" }, { "20", "20%" }, { "30", "30%" }, { "40", "40%" }, { "50", "50%" }, { "60", "60%" }, { "70", "70%" }, { "80", "80%" }, { "90", "90%" }, { "100", "100%" } };
 static const Opt LANG_OPTS[] = { { "", "Off" }, { "eng", "English" }, { "ara", "Arabic" }, { "fre", "French" }, { "spa", "Spanish" }, { "ger", "German" }, { "ita", "Italian" }, { "por", "Portuguese" }, { "rus", "Russian" }, { "tur", "Turkish" }, { "pol", "Polish" }, { "dut", "Dutch" }, { "swe", "Swedish" }, { "heb", "Hebrew" }, { "hin", "Hindi" }, { "jpn", "Japanese" }, { "kor", "Korean" }, { "chi", "Chinese" } };
+static const Opt OSM[] = { { "ai", "With AI translations" }, { "human", "Made by people only" }, { "off", "Off" } };
+static const Opt LITEO[] = { { "true", "On" }, { "false", "Off" } };
 static const Opt SEEK[] = { { "5", "5s" }, { "10", "10s" }, { "15", "15s" }, { "20", "20s" }, { "30", "30s" } };
 static const Opt AUDL[] = { { "orig", "Original language" }, { "eng", "English" }, { "ara", "Arabic" }, { "jpn", "Japanese" }, { "fre", "French" }, { "spa", "Spanish" }, { "ger", "German" }, { "ita", "Italian" }, { "por", "Portuguese" }, { "rus", "Russian" }, { "tur", "Turkish" }, { "pol", "Polish" }, { "dut", "Dutch" }, { "swe", "Swedish" }, { "heb", "Hebrew" }, { "hin", "Hindi" }, { "kor", "Korean" }, { "chi", "Chinese" } };
 static const Opt UPL[] = { { "off", "Off" }, { "C", "Low" }, { "B", "Medium" }, { "A", "High" } };
@@ -75,7 +77,7 @@ static const Opt CORNERO[] = { { "round", "Round" }, { "soft", "Soft" }, { "squa
 static const Opt ACCENT_OPTS[] = { { "logo", "From the logo" }, { "adaptive", "From the artwork" }, { "purple", "Purple" }, { "violet", "Violet" }, { "fuchsia", "Fuchsia" }, { "pink", "Pink" }, { "rose", "Rose" }, { "red", "Red" }, { "orange", "Orange" }, { "amber", "Amber" }, { "gold", "Gold" }, { "lime", "Lime" }, { "green", "Green" }, { "emerald", "Emerald" }, { "teal", "Teal" }, { "cyan", "Cyan" }, { "sky", "Sky" }, { "blue", "Blue" }, { "indigo", "Indigo" }, { "graphite", "Graphite" } };
 #define NCAT 11
 #define MAXROWS 48
-static Setting playBase[15], playS[16], subsBase[18], subsS[18], audS[6], lookS[9], langS[3], keyS[4], addonS[40], acctS[1], supS[8], picS[6], accS[8];
+static Setting playBase[16], playS[17], subsBase[19], subsS[19], audS[6], lookS[9], langS[3], keyS[4], addonS[40], acctS[1], supS[8], picS[6], accS[8];
 static Cat cats[NCAT]; static int ncat; /* (Keys leaves when this build carries every key) */
 static int cat_of(const Setting *opts) { for (int i = 0; i < ncat; i++) if (cats[i].opts == opts) return i; return -1; }
 
@@ -176,7 +178,7 @@ static const char *const RESET_KEYS[] = { "accent", "animeAudioTrack", "betaUpda
   "bingeWatch", "enableNextVideo", "blurUnseen", "clockFmt", "defaultAudioTrack", "dtsMode", "audioPassthrough", "dv7Convert", "enableDefaultAudioTrack", "homeRows",
   "metaLang", "nerdStats", "cleanSources", "filmEnhance", "gpuUpscale", "searchKnownOnly", "seekStep", "skipIntro", "skipShowSec", "ssDelay", "subsAssStyle", "subsAuto", "subsBgStyle", "subsBold", "subsColor",
   "subsFollow", "subsFont", "subsLang", "subsOutline", "subsOutlineColor", "subsOutlineWidth", "subsPos", "subsShadow", "subsShadowDist",
-  "subsShadowSoft", "subsShadowStrength", "subtitleSize", "uiSound", "uiSoundVol", "reduceMotion", "animeEnhance", "brightBoost", "darkSee", "voiceClear", "evenVolume", "subsNoSdh", "kbLang", "libSort", NULL };
+  "subsShadowSoft", "subsShadowStrength", "subtitleSize", "uiSound", "uiSoundVol", "reduceMotion", "animeEnhance", "brightBoost", "darkSee", "voiceClear", "evenVolume", "subsNoSdh", "kbLang", "libSort", "osSubs", "liteMode", "ytHd", NULL };
 static void enter(const void *p); static void show_cat(int i, int dir);
 static void do_reset(void *ud) { (void)ud;
   for (int i = 0; RESET_KEYS[i]; i++) store_remove(RESET_KEYS[i]);
@@ -196,7 +198,11 @@ static void play_layout(void) {
 #ifdef SB_ANDROID
   playS[n++] = playBase[14]; /* the picture through the graphics chip */
 #endif
-  for (int i = 0; i < 4; i++) { playS[n++] = playBase[i]; if (i == 1) { playS[n++] = playBase[8]; playS[n++] = playBase[12]; playS[n++] = playBase[10]; } }
+  for (int i = 0; i < 4; i++) { playS[n++] = playBase[i];
+#ifndef SB_ANDROID
+    if (i == 3) playS[n++] = playBase[15]; /* YouTube trailers in 1080p (LG webOS: a switch) */
+#endif
+    if (i == 1) { playS[n++] = playBase[8]; playS[n++] = playBase[12]; playS[n++] = playBase[10]; } }
   playS[n++] = playBase[11]; /* what Search shows */
   if (on) playS[n++] = playBase[6];
   const TvCaps *tc = best_caps(); if (tc && tc->dv) playS[n++] = playBase[7];
@@ -212,6 +218,7 @@ static void subs_layout(void) {
   subsS[n++] = subsBase[15]; /* picked by themselves (on: in the language under it) */
   subsS[n++] = subsBase[16]; /* kept in sync while the film plays */
   subsS[n++] = subsBase[17]; /* without [coughs] and the like */
+  subsS[n++] = subsBase[18]; /* the built-in OpenSubtitles */
   for (int i = 0; i < 6; i++) subsS[n++] = subsBase[i]; /* language, size, font, bold, colour, the outline's switch */
   if (ol) { subsS[n++] = subsBase[6]; subsS[n++] = subsBase[7]; }
   subsS[n++] = subsBase[8]; if (sh) { subsS[n++] = subsBase[9]; subsS[n++] = subsBase[10]; subsS[n++] = subsBase[11]; }
@@ -227,7 +234,7 @@ static void usb_row(void) {
 }
 static void caps_known(const TvCaps *c, void *ud) { (void)c; (void)ud; play_layout(); S.dirty = 1; }
 static void build(void) {
-  set_s(&playBase[0], "seekStep", "Seek step", "How far Left / Right jumps in the player", SEEK, 5, "10");
+  set_s(&playBase[0], "seekStep", "Seek step", "How far Left / Right and the back and forward buttons jump in the player", SEEK, 5, "10");
   set_s(&playBase[1], "bingeWatch", "Auto-play next episode", "When an episode ends, the next one starts", OO, 2, "true");
   set_s(&playBase[2], "aspectMode", "Picture size", "Original, fill the screen or zoom", ASPECT, 3, "fit");
   set_s(&playBase[3], "bgTrailer", "Background trailers", "A trailer plays behind Home after a few seconds", OO, 2, "true");
@@ -235,6 +242,7 @@ static void build(void) {
   set_s(&playBase[7], "dv7Convert", "Dolby Vision for Blu-ray copies", "Their picture is converted on this TV so it shows in Dolby Vision, not HDR10", OO, 2, "true");
   set_s(&playBase[9], "bestRow", "Best match for this TV", "First in the streams: what this TV plays best, in the title’s own language, subtitles named", OO, 2, "true");
   set_s(&playBase[14], "gpuUpscale", "Upscale films and series", "Each frame redrawn by the graphics chip: lower resolutions brought up to 1080p and detail sharpened where the picture allows. HD and below; HDR and 4K stay as they are", GUPL, 4, "off");
+  set_s(&playBase[15], "ytHd", "YouTube trailers in 1080p", "Warning: a trailer may take longer to start, and a TV before webOS 4 cannot play them (the usual 360p one plays after a moment). Trailers from IMDb are always at their best", OO, 2, "false");
   set_s(&playBase[13], "cleanSources", "Clean sources", "Leaves out programs, archives and fake files, and sources of another episode than the one you opened", OO, 2, "true");
   set_s(&playBase[11], "searchKnownOnly", "Search well-known services only", "Results are films and series on Netflix, Prime Video, Disney+ and the like", OO, 2, "true");
   set_s(&playBase[10], "blurUnseen", "Blur unwatched episodes", "Their pictures stay blurred and their stories hidden until you watch them: no spoilers", OO, 2, "false");
@@ -245,6 +253,7 @@ static void build(void) {
   set_s(&subsBase[15], "subsAuto", "Turn on subtitles automatically", "When a film starts: your addons' first, else OpenSubtitles, else the film's own track; synced quietly", OO, 2, "true");
   set_s(&subsBase[17], "subsNoSdh", "Hide sound descriptions", "[coughs], (gunshots) and speakers' names left out of the lines", OO, 2, "true");
   set_s(&subsBase[16], "subsFollow", "Keep subtitles in sync", "Checked again every few minutes in the background; moved only when they drift", OO, 2, "true");
+  set_s(&subsBase[18], "osSubs", "OpenSubtitles", "Built in, the Pro service: with subtitles translated by AI when no person has made one, made by people only, or off", OSM, 3, "ai");
   set_s(&subsBase[0], "subsLang", "Default subtitles", "Chosen by itself when a film starts", LANG_OPTS, 18, "eng");
   set_s(&subsBase[1], "subtitleSize", "Size", "Also in the player, under Subtitles", SIZES, 7, "3");
   set_s(&subsBase[2], "subsFont", "Font", "", SFONT, 6, "0");
@@ -268,10 +277,17 @@ static void build(void) {
   set_s(&audS[4], "uiSoundVol", "Interface sound level", "Of the TV\xe2\x80\x99s volume", SVOL, 10, "30");
   set_s(&picS[0], "animeEnhance", "Anime upscale", "Anime only: the TV's Super Resolution, gradation and line work tuned for drawn pictures on the way to 4K. Also on a button in the player", UPL, 4, "A");
   set_s(&picS[5], "filmEnhance", "Upscale films and series", "The TV's own AI upscaler (Super Resolution) at this strength, with its sharpness and edge enhancer: the picture rebuilt on the way to 4K", UPL, 4, "off");
-  set_s(&picS[1], "brightBoost", "Brightness", "The screen's light raised while you watch, energy saving off", OO, 2, "false");
-  set_s(&picS[2], "darkSee", "See in the dark", "Dark scenes clearer in a bright room: the TV's AI brightness for dark areas and a slight lift of black", OO, 2, "false");
+#ifdef SB_ANDROID
+  set_s(&picS[1], "brightBoost", "Brightness", "The whole picture brighter, bright parts kept from washing out. HD and below; HDR and 4K stay as they are", OO, 2, "false");
+  set_s(&picS[2], "darkSee", "See in the dark", "Dark scenes opened up: shadows lifted, black kept black and bright parts left alone. HD and below; HDR and 4K stay as they are", OO, 2, "false");
+  set_s(&picS[3], "voiceClear", "Clear voice", "Speech brought forward of music and effects. Not with Dolby and DTS sent to a receiver as they are", OO, 2, "false");
+  set_s(&picS[4], "evenVolume", "Even volume", "Loud scenes held back and quiet speech raised: one volume for the whole film", OO, 2, "false");
+#else
+  set_s(&picS[1], "brightBoost", "Brightness", "The screen's light and peak brightness raised while you watch, energy saving and its dimming off", OO, 2, "false");
+  set_s(&picS[2], "darkSee", "See in the dark", "Dark scenes opened up: shadows lifted by the TV's gamma and tone mapping, its AI brightness on, black raised a little", OO, 2, "false");
   set_s(&picS[3], "voiceClear", "Clear voice", "Speech clearer through the TV's own dialogue enhancer; stereo and Atmos stay as they are", OO, 2, "true");
   set_s(&picS[4], "evenVolume", "Even volume", "Loud scenes and quiet speech brought closer together", OO, 2, "false");
+#endif
   int naud = 6; { Setting t = audS[5]; for (int i = 5; i > 2; i--) audS[i] = audS[i - 1]; audS[2] = t; } /* anime's right under the films' */
 #ifdef SB_ANDROID
   for (int i = 0; i < naud; i++) if (!strcmp(audS[i].k, "dtsMode")) /* (no DTS converter here: in its place, where Dolby and DTS are decoded) */
@@ -283,6 +299,7 @@ static void build(void) {
   set_s(&lookS[2], "clockFmt", "Clock", "The time at the top of the screens and when a film ends", CLOCKO, 2, "12");
   set_s(&lookS[4], "appIcon", "App icon", "On the start screen and in About", APPICON, 2, "origin");
   set_s(&lookS[5], "reduceMotion", "Reduce motion", "Quicker moves, still glows and no trailers behind the pages: smoother on a slower TV", OO, 2, "false");
+  set_s(&lookS[7], "liteMode", "Reduce for old TVs", "For slow devices: the app drawn lighter (720p, flat glass, no shadows, no trailers behind the pages, short moves) and films kept on a smaller buffer. Complete the next time the app starts", LITEO, 2, app_lite() ? "true" : "false");
   set_s(&lookS[3], "homeRows", "Catalogs on Home", "From your addons, in their order. Discover shows the rest", HROWS, 4, "8");
   /* language names are shown in their own language, never translated */
   set_s(&langS[0], "uiLang", "Language", "The app restarts in the new language", NULL, 0, "auto");
@@ -297,9 +314,13 @@ static void build(void) {
   /* grouped by task: what you watch, what the screens look like, account and system; Log out on its own, last */
   Cat c[NCAT] = {
     { "Watch", "Playback", "set_play", "Best match, seek step, next episode, skip intro", NULL, playS, 8, 0 }, /* (the count: play_layout) */
-    { "Watch", "Subtitles", "set_subs", "Automatic, in sync, sound descriptions, language, size, font, outline, shadow, height", "subs", subsS, 18, 0 }, /* (the count: subs_layout) */
+    { "Watch", "Subtitles", "set_subs", "Automatic, in sync, sound descriptions, language, size, font, outline, shadow, height", "subs", subsS, 19, 0 }, /* (the count: subs_layout) */
     { "Watch", "Audio", "set_aud", "Audio language, anime, Dolby and DTS, interface sounds", NULL, audS, naud, 0 },
+#ifdef SB_ANDROID
+    { "Watch", "Picture and sound", "p_asp", "Brightness, see in the dark, clear voice, even volume", NULL, picS + 1, 4, 0 },
+#else
     { "Watch", "Picture and sound", "p_asp", "Upscale, brightness, see in the dark, clear voice. Needs Homebrew Channel root", NULL, picS, 6, 0 },
+#endif
     { "Screens", "Appearance", "set_look", "Accent colour, corners, app icon, clock, catalogs on Home, motion", "look", lookS, 7, 0 },
     { "Screens", "Language", "set_lang", "The app, and titles and descriptions", NULL, langS, nl, 0 },
     { "Account and system", "Accounts", "set_acct", "Switch between your Stremio accounts on this TV", NULL, accS, nacc, 0 },
@@ -312,7 +333,7 @@ static void build(void) {
 #endif
   ncat = 0; for (int i = 0; i < NCAT; i++) if (c[i].opts != keyS || nk) {
 #ifdef SB_ANDROID
-    if (c[i].opts == picS) continue; /* (the TV's picture and sound settings: LG's own, through Homebrew Channel) */
+    if (c[i].opts == lookS) c[i].n = 8; /* (Reduce for old TVs) */
 #endif
     cats[ncat++] = c[i]; }
   play_layout(); subs_layout(); S.dirty = 1;

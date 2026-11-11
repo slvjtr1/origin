@@ -203,12 +203,52 @@ static void conv_serve(int fd, unsigned id, const char *path, int head) {
   pthread_mutex_unlock(&c->runMu); conv_unref(c);
 }
 
+/* a small text made by the app (a trailer's manifest), served to the player on this device: /t/<id>/<name> */
+#define NTXT 4
+static struct { unsigned id; char *body; char type[48]; } txts[NTXT]; static int txtAt;
+/* A YouTube trailer's sharp picture and its sound are two files, each one piece with an index at its head. For a TV
+   whose player takes one address, they are given as HLS made here: a master list naming the picture and the sound,
+   and for each a list of the file's own parts (byte ranges, read from its index when the player asks: nothing is
+   copied, the TV reads YouTube's files itself). /y/<id>/m.m3u8, v.m3u8, a.m3u8 */
+typedef struct { unsigned id; char url[2][2100]; long initEnd[2], ix0[2], ix1[2]; char codecs[96]; int w, h; double bw; } YtEnt;
+static YtEnt yts[3]; static int ytAt;
+static unsigned be32(const unsigned char *p) { return (unsigned)p[0] << 24 | p[1] << 16 | p[2] << 8 | p[3]; }
+static char *yt_list(const YtEnt *e, int k) {
+  NetRange *r = net_range_new(); if (!r) return NULL; unsigned char *b = NULL; long got = 0; int st = 0; long need = e->ix1[k] - e->ix0[k] + 1; char *out = NULL;
+  if (need > 20 && need < (1 << 20) && net_range_get(r, e->url[k], e->ix0[k], need, &b, &got, NULL, &st, 6000) == NR_OK && got == need && !memcmp(b + 4, "sidx", 4)) {
+    int ver = b[8]; unsigned ts = be32(b + 16); long p = ver ? 36 : 28; unsigned long long first = ver ? ((unsigned long long)be32(b + 28) << 32 | be32(b + 32)) : be32(b + 24);
+    int n = p + 4 <= got ? (b[p + 2] << 8 | b[p + 3]) : 0; p += 4;
+    if (ts && n > 0 && p + 12L * n <= got) {
+      size_t ul = strlen(e->url[k]), cap = (size_t)n * (ul + 96) + ul + 400; out = malloc(cap); double mx = 1; for (int i = 0; i < n; i++) { double d = be32(b + p + 12 * i + 4) / (double)ts; if (d > mx) mx = d; }
+      size_t o = (size_t)snprintf(out, cap, "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:%d\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-INDEPENDENT-SEGMENTS\n#EXT-X-MAP:URI=\"%s\",BYTERANGE=\"%ld@0\"\n", (int)ceil(mx), e->url[k], e->initEnd[k] + 1);
+      unsigned long long off = (unsigned long long)e->ix1[k] + 1 + first;
+      for (int i = 0; i < n && o + ul + 96 < cap; i++) { unsigned sz = be32(b + p + 12 * i) & 0x7fffffffu; double d = be32(b + p + 12 * i + 4) / (double)ts;
+        o += (size_t)snprintf(out + o, cap - o, "#EXTINF:%.5f,\n#EXT-X-BYTERANGE:%u@%llu\n%s\n", d, sz, off, e->url[k]); off += sz; }
+      snprintf(out + o, cap - o, "#EXT-X-ENDLIST\n"); } }
+  else fprintf(stderr, "[hproxy] a trailer's index could not be read (HTTP %d)\n", st);
+  free(b); net_range_free(r); return out;
+}
+static void yt_serve(int fd, unsigned id, const char *path, int head) {
+  YtEnt e; int found = 0; pthread_mutex_lock(&mu); for (int i = 0; i < 3; i++) if (yts[i].id == id) { e = yts[i]; found = 1; } pthread_mutex_unlock(&mu);
+  char *body = NULL; const char *f = strrchr(path, '/'); f = f ? f + 1 : "";
+  if (found && !strncmp(f, "m.m3u8", 6)) { body = malloc(700); snprintf(body, 700, "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"a\",NAME=\"Audio\",DEFAULT=YES,AUTOSELECT=YES,URI=\"a.m3u8\"\n"
+    "#EXT-X-STREAM-INF:BANDWIDTH=%.0f,CODECS=\"%s\",RESOLUTION=%dx%d,AUDIO=\"a\"\nv.m3u8\n", e.bw, e.codecs, e.w, e.h); }
+  else if (found && (!strncmp(f, "v.m3u8", 6) || !strncmp(f, "a.m3u8", 6))) body = yt_list(&e, f[0] == 'a');
+  if (body) { char h[256]; int k = snprintf(h, sizeof h, "HTTP/1.1 200 OK\r\nContent-Type: application/vnd.apple.mpegurl\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n", strlen(body)); send_all(fd, h, (size_t)k); if (!head) send_all(fd, body, strlen(body)); free(body); }
+  else { const char *nf = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"; send_all(fd, nf, strlen(nf)); }
+}
 static void *serve(void *a) {
   plat_thread_background(5);
   int fd = (int)(intptr_t)a; char req[8192]; size_t got = 0;
   while (got < sizeof req - 1) { ssize_t k = recv(fd, req + got, sizeof req - 1 - got, 0); if (k <= 0) break; got += (size_t)k; req[got] = 0; if (strstr(req, "\r\n\r\n")) break; }
   req[got] = 0; char method[8] = "", path[256] = ""; unsigned id = 0;
   if (sscanf(req, "%7s %255s", method, path) == 2 && sscanf(path, "/h/%u/", &id) == 1) { conv_serve(fd, id, path, !strcmp(method, "HEAD")); close(fd); return NULL; }
+  if (sscanf(path, "/y/%u/", &id) == 1) { yt_serve(fd, id, path, !strcmp(method, "HEAD")); close(fd); return NULL; }
+  if (sscanf(path, "/t/%u/", &id) == 1) { char *b = NULL; char ty[48] = "";
+    pthread_mutex_lock(&mu); for (int i = 0; i < NTXT; i++) if (txts[i].id == id && txts[i].body) { b = strdup(txts[i].body); snprintf(ty, sizeof ty, "%s", txts[i].type); } pthread_mutex_unlock(&mu);
+    if (b) { char h[256]; int k = snprintf(h, sizeof h, "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n", ty, strlen(b)); send_all(fd, h, (size_t)k); if (strcmp(method, "HEAD")) send_all(fd, b, strlen(b)); free(b); }
+    else { const char *nf = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"; send_all(fd, nf, strlen(nf)); }
+    close(fd); return NULL; }
   if (sscanf(path, "/s/%u", &id) == 1) {
     Ent e; int found = 0; pthread_mutex_lock(&mu); for (int i = 0; i < NENT; i++) if (ents[i].id == id) { e = ents[i]; found = 1; } pthread_mutex_unlock(&mu);
     if (found) {
@@ -238,6 +278,19 @@ static int start(void) {
   port = ntohs(a.sin_port); lsock = s;
   pthread_t t; if (pthread_create(&t, NULL, accept_loop, NULL)) { close(s); lsock = -1; return 0; } pthread_detach(t);
   fprintf(stderr, "[hproxy] on 127.0.0.1:%d\n", port); return 1;
+}
+static int start(void);
+int hproxy_yt(const char *vurl, long vInitEnd, long vIx0, long vIx1, const char *aurl, long aInitEnd, long aIx0, long aIx1, const char *codecs, int w, int h, double bw, char *out, size_t cap) {
+  out[0] = 0; if (strlen(vurl) >= 2100 || strlen(aurl) >= 2100 || !start()) return 0;
+  pthread_mutex_lock(&mu); YtEnt *e = &yts[ytAt]; ytAt = (ytAt + 1) % 3; memset(e, 0, sizeof *e); e->id = nextId++;
+  snprintf(e->url[0], 2100, "%s", vurl); snprintf(e->url[1], 2100, "%s", aurl); e->initEnd[0] = vInitEnd; e->ix0[0] = vIx0; e->ix1[0] = vIx1; e->initEnd[1] = aInitEnd; e->ix0[1] = aIx0; e->ix1[1] = aIx1;
+  snprintf(e->codecs, sizeof e->codecs, "%s", codecs); e->w = w; e->h = h; e->bw = bw;
+  snprintf(out, cap, "http://127.0.0.1:%d/y/%u/m.m3u8", port, e->id); pthread_mutex_unlock(&mu); return 1;
+}
+int hproxy_text(const char *body, const char *type, const char *name, char *out, size_t cap) {
+  if (!start()) { out[0] = 0; return 0; }
+  pthread_mutex_lock(&mu); int i = txtAt; txtAt = (txtAt + 1) % NTXT; free(txts[i].body); txts[i].body = strdup(body); txts[i].id = nextId++; snprintf(txts[i].type, sizeof txts[i].type, "%s", type);
+  snprintf(out, cap, "http://127.0.0.1:%d/t/%u/%s", port, txts[i].id, name); pthread_mutex_unlock(&mu); return 1;
 }
 int hproxy_url(const char *url, const char *req, const char *resp, char *out, size_t cap) {
   if (!start()) { snprintf(out, cap, "%s", url); return 0; }

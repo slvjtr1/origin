@@ -109,4 +109,5 @@ void gfx_fill_report(char *out, int cap); /* SB_FILL=1: the screen area drawn pe
 /* a radial glow (the box gx,gy,gw,gh) seen only inside the rounded box x,y,w,h: glows in a rounded picture keep its corners */
 void gfx_glow_round(float gx, float gy, float gw, float gh, uint32_t c, float x, float y, float w, float h, float r);
 GLuint gfx_radial_tex(void);     /* a soft disc, alpha only, 128x128: glows and vignettes as one textured quad */   /* milliseconds spent in buffer uploads + draw calls since the last reset */
+extern int gfx_lite; /* 1: the light drawing of Reduce for old TVs (Google TV): no soft shadows, glass drawn flat */
 #endif

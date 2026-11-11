@@ -1,6 +1,8 @@
 #include "core/trailer.h"
 #include "core/net.h"
 #include "core/json.h"
+#include "core/hproxy.h"
+#include "core/store.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -109,7 +111,7 @@ static void deliver(Job *j) {
   Trailer *t = calloc(1, sizeof *t); const char *hls = js_str(o, "hls", "");
   /* HLS when IMDb has it: its MP4s mark too few keyframes for the TV to seek; the background trailer keeps the 480p MP4 */
   if (*hls && !j->lq) { cpy(t->url, sizeof t->url, hls); cpy(t->alt, sizeof t->alt, url); cpy(t->mime, sizeof t->mime, "application/x-mpegurl"); }
-  else { cpy(t->url, sizeof t->url, url); cpy(t->mime, sizeof t->mime, "video/mp4"); }
+  else { cpy(t->url, sizeof t->url, url); cpy(t->mime, sizeof t->mime, js_str(o, "mime", "video/mp4")); cpy(t->alt, sizeof t->alt, js_str(o, "alt", "")); }
   cpy(t->name, sizeof t->name, js_str(o, "name", "Trailer")); t->runtime = (int)js_num(o, "runtime", 0); cpy(t->source, sizeof t->source, js_str(o, "source", ""));
   const cJSON *s; cJSON_ArrayForEach(s, js_arr(o, "subs")) { if (t->nsubs >= TRAILER_MAX_SUBS) break; TrailerSub *d = &t->subs[t->nsubs++];
     cpy(d->url, sizeof d->url, js_str(s, "url", "")); cpy(d->lang, sizeof d->lang, js_str(s, "lang", "eng")); cpy(d->name, sizeof d->name, js_str(s, "name", "English")); cpy(d->kind, sizeof d->kind, js_str(s, "kind", "srt")); }
@@ -175,7 +177,12 @@ typedef struct { char vid[20]; YtCb cb; void *ud; int k, order[NPIPED], n; } YtR
 static void on_innertube(int st, const unsigned char *body, size_t len, void *ud) {
   YtReq *r = ud; cJSON *j = st > 0 ? net_json(body) : NULL, *out = NULL;
   if (j) {
-    const char *lo = "", *hi = ""; const cJSON *f;
+    const char *lo = "", *hi = ""; const cJSON *f, *bv = NULL, *ba = NULL;
+    /* YouTube keeps picture and sound together only at 360p; the sharper pictures come apart from their sound. The
+       best H.264 picture up to 1080p (every TV decodes it) and the AAC sound are kept for a manifest that joins them */
+    cJSON_ArrayForEach(f, js_arr(js_obj(j, "streamingData"), "adaptiveFormats")) { const char *m = js_str(f, "mimeType", ""); if (!*js_str(f, "url", "") || !js_obj(f, "indexRange") || !js_obj(f, "initRange")) continue;
+      if (!strncmp(m, "video/mp4", 9) && strstr(m, "avc1")) { int h = (int)js_num(f, "height", 0); if (h <= 1088 && (!bv || h > js_num(bv, "height", 0) || (h == js_num(bv, "height", 0) && js_num(f, "bitrate", 0) > js_num(bv, "bitrate", 0)))) bv = f; }
+      else if (!strncmp(m, "audio/mp4", 9) && strstr(m, "mp4a.40.2") && !js_obj(f, "audioTrack") && (!ba || js_num(f, "bitrate", 0) > js_num(ba, "bitrate", 0))) ba = f; }
     cJSON_ArrayForEach(f, js_arr(js_obj(j, "streamingData"), "formats")) {
       const char *u = js_str(f, "url", ""); if (!*u || strncmp(js_str(f, "mimeType", ""), "video/mp4", 9)) continue;
       int itag = (int)js_num(f, "itag", 0);
@@ -193,6 +200,7 @@ static void on_innertube(int st, const unsigned char *body, size_t len, void *ud
     }
     if (*lo || *hi || cJSON_GetArraySize(subs)) {
       out = cJSON_CreateObject(); cJSON_AddStringToObject(out, "lo", lo); cJSON_AddStringToObject(out, "hi", hi);
+      if (bv && ba && js_num(bv, "height", 0) > 400) { cJSON_AddItemToObject(out, "dv", cJSON_Duplicate(bv, 1)); cJSON_AddItemToObject(out, "da", cJSON_Duplicate(ba, 1)); }
       cJSON_AddNumberToObject(out, "len", js_numstr(js_obj(j, "videoDetails"), "lengthSeconds", 0)); /* to match it against IMDb's cuts */
       cJSON_AddItemToObject(out, "subs", subs);
     } else cJSON_Delete(subs);
@@ -375,11 +383,45 @@ static void imdb_reply(Job *j, const cJSON *v, const cJSON *subs) {
   cJSON_AddItemToObject(o, "subs", subs ? cJSON_Duplicate(subs, 1) : cJSON_CreateArray());
   reply(j, o);
 }
+/* the manifest that joins YouTube's sharper picture to its sound (DASH, both files as they are, their own indexes):
+   kept on this device and given to the player as a local address. Google TV's player reads it; "" when it cannot be made */
+static void xml_esc(const char *s, char *o, size_t cap) { size_t n = 0; for (; *s && n + 6 < cap; s++) { if (*s == '&') { memcpy(o + n, "&amp;", 5); n += 5; } else if (*s == '<') { memcpy(o + n, "&lt;", 4); n += 4; } else o[n++] = *s; } o[n] = 0; }
+static void yt_codecs(const cJSON *f, char *o, size_t cap) { const char *m = js_str(f, "mimeType", ""), *c = strstr(m, "codecs=\""); o[0] = 0; if (c) { c += 8; snprintf(o, cap, "%.*s", (int)strcspn(c, "\""), c); } }
+static int yt_manifest(const cJSON *c, char *out, size_t cap) {
+  out[0] = 0;
+#ifdef SB_ANDROID
+  const cJSON *v = js_obj(c, "dv"), *a = js_obj(c, "da"); double len = js_num(c, "len", 0); if (!v || !a || len <= 0) return 0;
+  char *x = malloc(12000), vu[4200], au[4200], vc[48], ac[48]; if (!x) return 0;
+  xml_esc(js_str(v, "url", ""), vu, sizeof vu); xml_esc(js_str(a, "url", ""), au, sizeof au); yt_codecs(v, vc, sizeof vc); yt_codecs(a, ac, sizeof ac);
+  const cJSON *vi = js_obj(v, "initRange"), *vx = js_obj(v, "indexRange"), *ai = js_obj(a, "initRange"), *ax = js_obj(a, "indexRange");
+  int n = snprintf(x, 12000, "<?xml version=\"1.0\" encoding=\"UTF-8\"?><MPD xmlns=\"urn:mpeg:dash:schema:mpd:2011\" type=\"static\" mediaPresentationDuration=\"PT%.1fS\" minBufferTime=\"PT1.5S\" profiles=\"urn:mpeg:dash:profile:isoff-on-demand:2011\"><Period>"
+    "<AdaptationSet mimeType=\"video/mp4\" subsegmentAlignment=\"true\"><Representation id=\"v\" codecs=\"%s\" bandwidth=\"%.0f\" width=\"%.0f\" height=\"%.0f\"><BaseURL>%s</BaseURL><SegmentBase indexRange=\"%s-%s\"><Initialization range=\"%s-%s\"/></SegmentBase></Representation></AdaptationSet>"
+    "<AdaptationSet mimeType=\"audio/mp4\" subsegmentAlignment=\"true\"><Representation id=\"a\" codecs=\"%s\" bandwidth=\"%.0f\"><BaseURL>%s</BaseURL><SegmentBase indexRange=\"%s-%s\"><Initialization range=\"%s-%s\"/></SegmentBase></Representation></AdaptationSet></Period></MPD>",
+    len, vc, js_num(v, "bitrate", 0), js_num(v, "width", 0), js_num(v, "height", 0), vu, js_str(vx, "start", "0"), js_str(vx, "end", "0"), js_str(vi, "start", "0"), js_str(vi, "end", "0"),
+    ac, js_num(a, "bitrate", 0), au, js_str(ax, "start", "0"), js_str(ax, "end", "0"), js_str(ai, "start", "0"), js_str(ai, "end", "0"));
+  int ok = n > 0 && n < 12000 && hproxy_text(x, "application/dash+xml", "trailer.mpd", out, cap); free(x);
+  if (ok) fprintf(stderr, "[yt] the %dp picture and its sound, joined\n", (int)js_num(v, "height", 0));
+  return ok;
+#else
+  /* LG webOS: the same two files as HLS made on the TV (hproxy_yt). A switch in Settings, off as it comes: how soon
+     it starts depends on the TV, and an older one cannot play it (the 360p file plays then) */
+  if (strcmp(store_get("ytHd", "false"), "true")) return 0;
+  const cJSON *v = js_obj(c, "dv"), *a = js_obj(c, "da"); if (!v || !a) return 0; char vc[48], ac[48], cc[100]; yt_codecs(v, vc, sizeof vc); yt_codecs(a, ac, sizeof ac); snprintf(cc, sizeof cc, "%s,%s", vc, ac);
+  int ok = hproxy_yt(js_str(v, "url", ""), atol(js_str(js_obj(v, "initRange"), "end", "0")), atol(js_str(js_obj(v, "indexRange"), "start", "0")), atol(js_str(js_obj(v, "indexRange"), "end", "0")),
+                     js_str(a, "url", ""), atol(js_str(js_obj(a, "initRange"), "end", "0")), atol(js_str(js_obj(a, "indexRange"), "start", "0")), atol(js_str(js_obj(a, "indexRange"), "end", "0")),
+                     cc, (int)js_num(v, "width", 0), (int)js_num(v, "height", 0), js_num(v, "bitrate", 0) + js_num(a, "bitrate", 0), out, cap);
+  if (ok) fprintf(stderr, "[yt] the %dp picture and its sound, as HLS\n", (int)js_num(v, "height", 0));
+  return ok;
+#endif
+}
 static cJSON *err_obj(const char *e) { cJSON *o = cJSON_CreateObject(); cJSON_AddStringToObject(o, "err", e); return o; }
 static void on_yt_url(Job *j, const char *url, const char *err) {
   if (!*url) { reply(j, err_obj(*err ? err : "unavailable")); return; }
   const cJSON *c = memo_get(ytCache, j->yt[0], 1e9), *subs = js_arr(c, "subs");
-  cJSON *o = cJSON_CreateObject(); cJSON_AddStringToObject(o, "url", url); cJSON_AddStringToObject(o, "name", "Trailer"); cJSON_AddStringToObject(o, "source", "youtube");
+  cJSON *o = cJSON_CreateObject(); char mpd[200];
+  if (!j->lq && c && yt_manifest(c, mpd, sizeof mpd)) { cJSON_AddStringToObject(o, "url", mpd); cJSON_AddStringToObject(o, "alt", url); cJSON_AddStringToObject(o, "mime", strstr(mpd, ".m3u8") ? "application/x-mpegurl" : "application/dash+xml"); } /* the sharp one; the 360p file if it does not play */
+  else cJSON_AddStringToObject(o, "url", url);
+  cJSON_AddStringToObject(o, "name", "Trailer"); cJSON_AddStringToObject(o, "source", "youtube");
   cJSON_AddItemToObject(o, "subs", subs ? cJSON_Duplicate(subs, 1) : cJSON_CreateArray());
   reply(j, o);
 }

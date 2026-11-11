@@ -920,7 +920,20 @@ void app_init(void) {
 static void amb_bake(void);
 float anim_speed = 0.83f;
 /* Settings > Appearance > Reduce motion: quick moves, still glows, no trailers behind the pages: for a slower TV */
-int app_reduce_motion(void) { static unsigned ser = ~0u; static int on; if (store_serial() != ser) { ser = store_serial(); on = !strcmp(store_get("reduceMotion", "false"), "true"); anim_speed = on ? 0.3f : 0.83f; } return on; }
+/* Reduce for old TVs (Google TV only; on by itself on a device with little memory, a switch in Settings > Appearance):
+   the app drawn at 720p, the glass flat, no soft shadows, no trailers behind the pages, short moves, fewer pictures
+   kept. What it is at is left in a small file for the start of the app (the drawing size is chosen before anything is read). */
+int app_lite(void) {
+#ifdef SB_ANDROID
+  static unsigned ser = ~0u; static int on = -1; if (store_serial() != ser) { ser = store_serial(); const char *m = store_get("liteMode", "auto"); int mb = plat_mem_total_mb();
+    int v = !strcmp(m, "true") || (strcmp(m, "false") && mb > 0 && mb < 1700);
+    if (v != on) { on = v; char p[1200]; snprintf(p, sizeof p, "%s/lite", plat_data_dir()); FILE *f = fopen(p, "w"); if (f) { fputc(on ? '1' : '0', f); fclose(f); } } }
+  return on > 0;
+#else
+  return 0;
+#endif
+}
+int app_reduce_motion(void) { static unsigned ser = ~0u; static int on; if (store_serial() != ser) { ser = store_serial(); gfx_lite = app_lite(); on = gfx_lite || !strcmp(store_get("reduceMotion", "false"), "true"); anim_speed = on ? 0.3f : 0.83f; } return on; }
 void app_tick(float dt) {
   app_reduce_motion(); /* (the knob follows the setting) */
   tvtune_tick(); accounts_tick();

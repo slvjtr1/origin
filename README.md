@@ -30,7 +30,8 @@
 | **Torrents built in** | Played straight from the swarm with a buffer sized to your TV's memory, or kept on a USB drive on LG webOS. |
 | **Skip intro, recap and credits** | A button at the right moment. Press OK, or let it skip by itself. |
 | **Next episode** | Starts by itself, from the same source group when there is one. |
-| **Trailers** | A title's trailer plays behind its page and fills the screen after five seconds. |
+| **Trailers** | A title's trailer plays behind its page and fills the screen after five seconds, in the sharpest picture its source has. |
+| **A player bar of icons** | The picture on the left (upscale, picture size), the film in the middle (from the beginning, back, play, forward, next episode; your seek step written on the arrows), episodes, sources, sound and subtitles on the right. |
 
 ### Picture and sound
 | | |
@@ -39,12 +40,15 @@
 | **HDR and Dolby Vision** | Shown as they are on TVs that support them. |
 | **The film's frame rate** | Google TV switches the screen to 24, 25 or 50 Hz with the film when the TV allows it. |
 | **Upscale** | LG webOS: the TV's own Super Resolution, for films and for anime (needs Homebrew Channel root). Google TV: a graphics-chip pass for HD and lower. |
+| **Brightness, See in the dark** | LG webOS: the TV's light, gamma and tone mapping set while you watch and put back after (needs Homebrew Channel root). Google TV: drawn by the graphics chip, for HD and lower. |
+| **Clear voice, Even volume** | Speech brought forward and loud scenes held back: the TV's own processors on LG webOS, the app's on Google TV. |
 | **Audio language** | Your language whenever the file has it; anime in Japanese unless you choose another. |
 
 ### Subtitles
 | | |
 |---|---|
 | **Picked for you** | From your addons, OpenSubtitles and the file itself, in your language. |
+| **OpenSubtitles Pro, built in** | More subtitles and none of the spam: with AI translations, made by people only, or off. The standard service answers when it is away. |
 | **In sync** | Checked against other releases and brought into step by themselves; one press to adjust. |
 | **Your way** | Size, six fonts, bold, colours, outline, shadow, background and height. Styled ASS and SSA subtitles drawn as the film intends. Sound descriptions hidden. Arabic joined and right to left. |
 
@@ -63,6 +67,7 @@
 | **Several accounts** | Kept on the TV, a press apart. |
 | **Look** | Twenty accent colours, or the colours of the title you open; card corners; a 12 or 24 hour clock; a screensaver. |
 | **Arabic or English** | The whole app, end to end. |
+| **Reduce for old TVs** | Google TV: a lighter app for slow devices (720p drawing, flat glass, no shadows, short moves, a smaller buffer). On by itself where memory is short. |
 | **Updates from inside** | Settings › About. Beta updates are a switch away, never installed by themselves. |
 
 ## Install

@@ -15,6 +15,8 @@ void subs_free(Cue *c, int n);
 const char *subs_lang_canon(const char *code, char *out, size_t cap);
 int  subs_lang_match(const char *a, const char *b);
 const char *subs_lang_name(const char *code);  /* a track's language (eng / en / en-US) in English; NULL when unknown */
+int subs_os_mode(void);                        /* the built-in OpenSubtitles: 0 off, 1 subtitles made by people, 2 machine-translated ones too (Settings) */
+int subs_os_base(char *out, size_t cap);       /* its address for the language the viewer reads; 0 when turned off */
 const char *subs_sub_name(const char *code);   /* an OpenSubtitles entry's name (its own codes too: spl, pob, ze...); NULL when unknown */
 /* the built-in OpenSubtitles list for a video (asked by id alone); cb through subs_pump, subs malloc'd (the callback's
    owner frees them), ok: an answer was read */

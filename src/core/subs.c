@@ -1,5 +1,6 @@
 #include "platform/plat.h"
 #include "core/subs.h"
+#include "core/store.h"
 #include "core/subclean.h"
 #include "core/net.h"
 #include "core/json.h"
@@ -21,6 +22,7 @@ static int tc(const char *s, double *out, const char **end) {
 }
 static int cmp_cue(const void *a, const void *b) { double x = ((const Cue *)a)->s, y = ((const Cue *)b)->s; return x < y ? -1 : x > y; }
 static void cue_add(Cue **cues, int *n, int *cap, double s, double e, const char *t) {
+  if (strstr(t, "OpenSubtitles v3")) return; /* (the service's own notice at the head of its files: not a line of the film) */
   char *c = strdup(t); if (!c) return; if (sub_sdh_hide) sub_strip_sdh(c); sub_clean(c); if (!*c) { free(c); return; } /* the line without its clutter (every file: the addons', the AI-translated ones, OpenSubtitles'); nothing left: no line */
   if (*n == *cap) { *cap = *cap ? *cap * 2 : 256; *cues = realloc(*cues, *cap * sizeof **cues); }
   (*cues)[*n].s = s; (*cues)[*n].e = e; (*cues)[*n].t = c; (*n)++;
@@ -167,12 +169,12 @@ const char *subs_sub_name(const char *code) { char k[16]; base_code(code, k, siz
 typedef struct FindQ FindQ;
 typedef struct SubJob { struct SubJob *next; char *url; int list, status; unsigned char *body; size_t len; Cue *cues; int n;
   void (*cb)(int, Cue *, int, void *); void *ud;
-  FindQ *fq; int src; SubEntry *got; int ngot; int os; } SubJob;   /* list: one addon's answer for a FindQ (src: which); os: the built-in OpenSubtitles list */
+  FindQ *fq; int src; SubEntry *got; int ngot; int os, ms; } SubJob;   /* list: one addon's answer for a FindQ (src: which); os: the built-in OpenSubtitles list */
 static pthread_mutex_t jmu = PTHREAD_MUTEX_INITIALIZER; static SubJob *jdone;
 static void job_finish(SubJob *j) { pthread_mutex_lock(&jmu); j->next = jdone; jdone = j; pthread_mutex_unlock(&jmu); }
 static void list_parse(SubJob *j);
 static void *job_main(void *a) { plat_thread_background(5);
-  SubJob *j = a; j->body = net_fetch_sync(j->url, &j->len, &j->status, 20000); /* one addon's limit: the others never wait for it */
+  SubJob *j = a; j->body = net_fetch_sync(j->url, &j->len, &j->status, j->ms ? j->ms : 20000); /* one addon's limit: the others never wait for it */
   if (j->os) {} /* read on the main thread (on_list) */
   else if (j->list) list_parse(j);
   else if (j->body) { j->n = subs_parse_body(j->body, j->len, &j->cues); free(j->body); j->body = NULL; }
@@ -210,7 +212,7 @@ int subs_os_hash(const char *url, double *size, char out[17]) {
 /* what an entry says of the file it was made for: its name, and whether the video's hash found it ("m": "h" on
    OpenSubtitles' answers; other addons' own words for it) */
 void subs_entry_facts(SubEntry *e, const struct cJSON *s) {
-  const char *rel = js_str(s, "subtitleFileName", js_str(s, "releaseName", js_str(s, "release", ""))); snprintf(e->rel, sizeof e->rel, "%s", rel);
+  const char *rel = js_str(s, "subtitleFileName", js_str(s, "releaseName", js_str(s, "release", js_str(s, "title", "")))); snprintf(e->rel, sizeof e->rel, "%s", rel);
   const char *m = js_str(s, "m", ""); const cJSON *hm = cJSON_GetObjectItemCaseSensitive(s, "hashMatch"); const char *mb = js_str(s, "matchedBy", "");
   e->hm = !strcmp(m, "h") || cJSON_IsTrue(hm) || (cJSON_IsNumber(hm) && hm->valuedouble > 0) || strstr(mb, "hash") != NULL;
   const cJSON *fm = cJSON_GetObjectItemCaseSensitive(s, "fpsMilli"); double fp = cJSON_IsNumber(fm) ? fm->valuedouble : cJSON_IsString(fm) ? atof(fm->valuestring) : 0;
@@ -224,23 +226,50 @@ int subs_hash_of(const char *url, char out[24], double *size) {
 }
 
 /* ---- the built-in OpenSubtitles list: asked by id alone, English first, then by name, 12 per language ---- */
-typedef struct { void (*cb)(SubEntry *, int, int, void *); void *ud; } ListReq;
-static int cmp_os(const void *a, const void *b) { const SubEntry *x = a, *y = b; int xe = !strcmp(x->lang, "eng"), ye = !strcmp(y->lang, "eng"); if (xe != ye) return ye - xe; int c = strcmp(x->name, y->name); return c ? c : x->n - y->n; }
+typedef struct { void (*cb)(SubEntry *, int, int, void *); void *ud; char plain[600]; } ListReq; /* plain: the standard service's address, asked when the Pro one does not answer */
+/* The built-in list comes from OpenSubtitles Pro (more subtitles, none of the spam), asked for the language the viewer
+   reads and English; Settings > Subtitles chooses it with or without machine-translated subtitles, or turns it off.
+   It is part of the app: never in the addons' list. No answer from it: the standard OpenSubtitles service instead. */
+#define OS_PRO "https://opensubtitlesv3-pro.dexter21767.com"
+#define OS_STD "https://opensubtitles-v3.strem.io"
+static void b64(const char *in, char *out, size_t cap) {
+  static const char A[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"; size_t n = strlen(in), o = 0;
+  for (size_t i = 0; i < n && o + 5 < cap; i += 3) { unsigned v = (unsigned char)in[i] << 16 | (i + 1 < n ? (unsigned char)in[i + 1] << 8 : 0) | (i + 2 < n ? (unsigned char)in[i + 2] : 0);
+    out[o++] = A[v >> 18 & 63]; out[o++] = A[v >> 12 & 63]; out[o++] = i + 1 < n ? A[v >> 6 & 63] : '='; out[o++] = i + 2 < n ? A[v & 63] : '='; }
+  out[o] = 0;
+}
+int subs_os_mode(void) { const char *m = store_get("osSubs", "ai"); return !strcmp(m, "off") ? 0 : !strcmp(m, "human") ? 1 : 2; } /* 0 off, 1 made by people only, 2 machine-translated ones too */
+int subs_os_base(char *out, size_t cap) {
+  int m = subs_os_mode(); if (!m) { out[0] = 0; return 0; }
+  char nm[48] = "", cfg[240], enc[340]; const char *n = subs_lang_name(store_get("subsLang", "eng"));
+  if (n) { snprintf(nm, sizeof nm, "%s", n); for (char *p = nm; *p; p++) { if (*p >= 'A' && *p <= 'Z') *p += 32; if (!(*p >= 'a' && *p <= 'z')) { nm[0] = 0; break; } } } /* (a name of one plain word: the service's own spelling) */
+  if (nm[0] && strcmp(nm, "english")) snprintf(cfg, sizeof cfg, "{\"langs\":[\"%s\",\"english\"],\"source\":\"all\",\"aiTranslated\":%s,\"autoAdjustment\":true}", nm, m == 2 ? "true" : "false");
+  else snprintf(cfg, sizeof cfg, "{\"langs\":[\"english\"],\"source\":\"all\",\"aiTranslated\":%s,\"autoAdjustment\":true}", m == 2 ? "true" : "false");
+  b64(cfg, enc, sizeof enc); snprintf(out, cap, "%s/%s", OS_PRO, enc); return 1;
+}
+static int os_ai(const cJSON *s) { const cJSON *a = cJSON_GetObjectItemCaseSensitive(s, "ai_translated"); return cJSON_IsTrue(a) || (cJSON_IsString(a) && (a->valuestring[0] == 'T' || a->valuestring[0] == 't')); }
+static int cmp_os(const void *a, const void *b) { const SubEntry *x = a, *y = b; int xe = !strcmp(x->lang, "eng"), ye = !strcmp(y->lang, "eng"); if (xe != ye) return ye - xe; int c = strcmp(x->name, y->name); if (c) return c;
+  if ((x->label[0] != 0) != (y->label[0] != 0)) return (x->label[0] != 0) - (y->label[0] != 0); /* made by people first, the machine-translated after them */ return x->n - y->n; }
 static void on_list(int st, const unsigned char *b, size_t n, void *ud) {
   (void)n; ListReq *r = ud; cJSON *j = st == 200 ? net_json(b) : NULL; const cJSON *arr = js_arr(j, "subtitles"), *s;
+  if (r->plain[0] && (!j || !arr || !cJSON_GetArraySize(arr))) { /* the Pro service is away, or has none: the standard one */
+    fprintf(stderr, "[subs] OpenSubtitles Pro: %s (status %d); the standard service instead\n", j ? "nothing" : "no answer", st); net_json_free(j);
+    SubJob *q = calloc(1, sizeof *q); q->url = strdup(r->plain); r->plain[0] = 0; q->list = 1; q->os = 1; q->ud = r; job_start(q); return; }
   SubEntry *out = calloc(256, sizeof *out); int no = 0; char langs[64][8]; int per[64], nl = 0;
   if (arr) cJSON_ArrayForEach(s, arr) { if (no >= 256) break; const char *url = js_str(s, "url", NULL); char lang[8]; snprintf(lang, sizeof lang, "%s", js_str(s, "lang", "")); for (char *p = lang; *p; p++) if (*p >= 'A' && *p <= 'Z') *p += 32; if (!*lang || !url || strlen(url) >= sizeof out->url) continue;
     int li = -1; for (int i = 0; i < nl; i++) if (!strcmp(langs[i], lang)) li = i; if (li < 0 && nl < 64) { li = nl++; snprintf(langs[li], 8, "%s", lang); per[li] = 0; } if (li < 0) continue;
     if (++per[li] > 12) continue; SubEntry *e = &out[no++]; snprintf(e->lang, sizeof e->lang, "%s", lang); const char *nm = subs_sub_name(lang);
     if (nm) snprintf(e->name, sizeof e->name, "%s", nm); else { snprintf(e->name, sizeof e->name, "%s", lang); for (char *p = e->name; *p; p++) if (*p >= 'a' && *p <= 'z') *p -= 32; }
-    snprintf(e->url, sizeof e->url, "%s", url); snprintf(e->addon, sizeof e->addon, "OpenSubtitles"); e->from = SUB_FALLBACK; e->order = 999; e->n = per[li]; subs_entry_facts(e, s); }
-  if (no) qsort(out, no, sizeof *out, cmp_os);
+    snprintf(e->url, sizeof e->url, "%s", url); snprintf(e->addon, sizeof e->addon, "OpenSubtitles"); e->from = SUB_FALLBACK; e->order = 999; e->n = per[li]; subs_entry_facts(e, s); if (os_ai(s)) snprintf(e->label, sizeof e->label, "AI"); }
+  if (no) { qsort(out, no, sizeof *out, cmp_os); for (int i = 0, k = 0; i < no; i++) { k = i && !strcmp(out[i].lang, out[i - 1].lang) ? k + 1 : 1; out[i].n = k; } } /* numbered as they are listed */
   r->cb(out, no, j != NULL, r->ud); net_json_free(j); free(r);
 }
 void subs_list(const char *type, const char *vid, void (*cb)(SubEntry *, int, int, void *), void *ud) {
   char t[96], enc[400], url[600]; addon_urlenc(type, t, sizeof t); addon_urlenc(vid, enc, sizeof enc);
-  snprintf(url, sizeof url, "https://opensubtitles-v3.strem.io/subtitles/%s/%s.json", t, enc);
-  ListReq *r = malloc(sizeof *r); r->cb = cb; r->ud = ud; SubJob *j = calloc(1, sizeof *j); j->url = strdup(url); j->list = 1; j->os = 1; j->ud = r; job_start(j);
+  char base[440]; if (!subs_os_base(base, sizeof base)) { cb(calloc(1, sizeof(SubEntry)), 0, 1, ud); return; } /* turned off in Settings: an empty list, at once */
+  ListReq *r = calloc(1, sizeof *r); r->cb = cb; r->ud = ud; snprintf(r->plain, sizeof r->plain, OS_STD "/subtitles/%s/%s.json", t, enc);
+  snprintf(url, sizeof url, "%s/subtitles/%s/%s.json", base, t, enc);
+  SubJob *j = calloc(1, sizeof *j); j->url = strdup(url); j->list = 1; j->os = 1; j->ms = 9000; j->ud = r; job_start(j);
 }
 
 /* ---- the addons' lists: every installed subtitles addon for this video, asked with the file's hash, size and name

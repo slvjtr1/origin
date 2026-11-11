@@ -257,7 +257,7 @@ int main(int argc, char **argv) {
   cache_prune_start(400);
 #endif
   snprintf(p, sizeof p, "%s/cache", store_data_dir()); img_init(p); img_set_draw_scale(gfx_scale());
-  if (memMb > 0) img_set_budget_mb(memMb < 1200 ? 40 : memMb < 3000 ? 128 : 192); /* pictures under the RAM the TV has (the shared atlas, backdrop and text add ~20 MB) */
+  if (memMb > 0) img_set_budget_mb(memMb < 1200 || app_lite() ? 40 : memMb < 3000 ? 128 : 192); /* pictures under the RAM the TV has (the shared atlas, backdrop and text add ~20 MB) */
   i18n_init(plat_asset_dir(), getenv("SB_LANG") ? getenv("SB_LANG") : store_get("uiLang", "auto")); /* SB_LANG=ar: development */
   if (!text_init(plat_asset_dir(), gfx_scale())) return 1;
   text_set_rtl(i18n_rtl()); icon_init(plat_asset_dir()); sb_init();

@@ -1,0 +1,39 @@
+{
+  "paging": {
+    "page": 1,
+    "count": 1,
+    "maxPage": 1,
+    "itemsTotal": 1
+  },
+  "packages": [
+    {
+      "id": "tv.stremioorigin.app",
+      "title": "Origin",
+      "iconUri": "https://slvjtr1.github.io/origin/icon.png",
+      "pool": "main",
+      "manifestUrl": "https://slvjtr1.github.io/origin/api/apps/tv.stremioorigin.app/manifest.json",
+      "shortDescription": "Native app for Stremio addons on LG webOS TVs. Unofficial.",
+      "fullDescriptionUrl": "api/apps/tv.stremioorigin.app/full_description.html",
+      "manifest": {
+        "id": "tv.stremioorigin.app",
+        "version": "1.0.0",
+        "type": "native",
+        "title": "Origin",
+        "appDescription": "Your own Stremio account and addons on your LG TV, in English or Arabic: artwork and full-screen trailers, the best stream in one press, styled subtitles, clean search. Unofficial.",
+        "iconUri": "https://slvjtr1.github.io/origin/icon.png",
+        "sourceUrl": "https://github.com/slvjtr1/origin",
+        "rootRequired": false,
+        "ipkUrl": "https://github.com/slvjtr1/origin/releases/download/v1.0.0/tv.stremioorigin.app_1.0.0_arm.ipk",
+        "ipkHash": {
+          "sha256": "89e88011cff559fc38ecbbf82b69b3ab8cf9156b9f8875905d25cc8342858e92"
+        },
+        "notes": [
+          "ORIGIN 1.0: A media center for your addons, on LG webOS and Google TV: your library, the best stream in one press, and subtitles that stay in sync.",
+          "A source fails, the next one plays: When a source does not play, the next best one starts by itself, then a third. If all three fail you choose from them.",
+          "Sound on every device: On Google TV the app carries its own decoders for Dolby, DTS and TrueHD: older boxes without them play every film with sound.",
+          "Clean sources, the right episode: Fake files and sources of another episode are left out, and a torrent pack plays the episode you opened."
+        ]
+      }
+    }
+  ]
+}

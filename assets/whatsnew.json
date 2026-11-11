@@ -1,0 +1,31 @@
+{
+  "version": "1.0.0",
+  "items": [
+    {
+      "icon": "play",
+      "title": "ORIGIN 1.0",
+      "text": "A media center for your addons, on LG webOS and Google TV: your library, the best stream in one press, and subtitles that stay in sync."
+    },
+    {
+      "icon": "p_src",
+      "title": "A source fails, the next one plays",
+      "text": "When a source does not play, the next best one starts by itself, then a third. If all three fail you choose from them."
+    },
+    {
+      "icon": "p_aud",
+      "title": "Sound on every device",
+      "text": "On Google TV the app carries its own decoders for Dolby, DTS and TrueHD: older boxes without them play every film with sound."
+    },
+    {
+      "icon": "check",
+      "title": "Clean sources, the right episode",
+      "text": "Fake files and sources of another episode are left out, and a torrent pack plays the episode you opened."
+    }
+  ],
+  "support": {
+    "title": "Thank you",
+    "message": "Thank you!",
+    "url": "https://slvjtr1.github.io/origin/",
+    "github": "https://github.com/slvjtr1/origin"
+  }
+}

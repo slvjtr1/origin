@@ -1,0 +1,58 @@
+[
+ {
+  "id": "demo1",
+  "type": "movie",
+  "name": "Northern Drift",
+  "description": "A lighthouse keeper follows a signal across the frozen sea, and finds a town that should not be there.",
+  "releaseInfo": "2024",
+  "runtime": "1h 52m"
+ },
+ {
+  "id": "demo2",
+  "type": "movie",
+  "name": "Paper Moons",
+  "description": "Two rival illustrators share one small studio for a summer, and one very large deadline.",
+  "releaseInfo": "2023",
+  "runtime": "1h 38m"
+ },
+ {
+  "id": "demo3",
+  "type": "movie",
+  "name": "Glass Orchard",
+  "description": "In a valley where the fruit grows clear as glass, a young botanist uncovers why nothing ever rots.",
+  "releaseInfo": "2025",
+  "runtime": "2h 04m"
+ },
+ {
+  "id": "demo4",
+  "type": "movie",
+  "name": "Velvet Signal",
+  "description": "A late-night radio host starts receiving calls from listeners who say they live tomorrow.",
+  "releaseInfo": "2022",
+  "runtime": "1h 47m"
+ },
+ {
+  "id": "demo5",
+  "type": "movie",
+  "name": "Low Tide City",
+  "description": "When the harbour drains overnight, a diver and a dockworker race to find what the water hid.",
+  "releaseInfo": "2024",
+  "runtime": "1h 59m"
+ },
+ {
+  "id": "demo6",
+  "type": "movie",
+  "name": "Ember and Ash",
+  "description": "Two siblings inherit a failing glassworks and one last furnace that never cools.",
+  "releaseInfo": "2023",
+  "runtime": "2h 11m"
+ },
+ {
+  "id": "demo7",
+  "type": "movie",
+  "name": "Halcyon Run",
+  "description": "A courier with one rule, never look at the package, takes the strangest delivery of her life.",
+  "releaseInfo": "2025",
+  "runtime": "1h 44m"
+ }
+]

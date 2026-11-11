@@ -1,0 +1,1 @@
+libdovi (dolby_vision 3.3.2, MIT, https://github.com/quietvoid/dovi_tool) and its dependencies, linked statically into libsbdts; their licenses are here. Exact versions: tools/dovi/Cargo.lock.

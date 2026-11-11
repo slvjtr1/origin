@@ -1,0 +1,1 @@
+libass 0.17.5 (ISC), https://github.com/libass/libass/releases/download/0.17.5/libass-0.17.5.tar.xz, SHA-256 2dca25c0e0c837ddf00b52011b3f82cac1e4ddd3ad018227806b0c2288864acc: the library's C sources, unmodified (no fontconfig, CoreText, DirectWrite or assembly)

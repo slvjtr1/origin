@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Help · Origin</title>
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#0c0b11">
+<link rel="icon" href="../icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Readex+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../site.css">
+<script src="../site.js"></script>
+</head>
+<body class="single">
+<div class="wrap">
+  <nav class="top">
+    <a class="brand" href="../"><img src="../icon.png" alt=""><span>Origin</span></a>
+    <div class="navlinks"><button class="lang" data-lang-toggle><span lang="en">العربية</span><span lang="ar">English</span></button></div>
+  </nav>
+</div>
+<main class="wrap">
+  <div class="panel" id="log" hidden>
+    <p><span lang="en">Your log code</span><span lang="ar">رمز السجل</span></p>
+    <div class="code" id="code"></div>
+    <p id="vline"></p>
+    <p><span lang="en">Report the problem with this code: say what you did and what happened. The logs themselves stay sealed; only the code is shared.</span><span lang="ar">أبلغ عن المشكلة بهذا الرمز: اذكر ما فعلته وما حدث. السجلات نفسها تبقى مشفّرة، ولا يُشارك إلا الرمز.</span></p>
+    <a class="btn primary" id="report" rel="noopener"><span lang="en">Report on GitHub</span><span lang="ar">أبلغ على GitHub</span></a>
+    <button class="btn ghost" id="cp"><span lang="en">Copy the code</span><span lang="ar">انسخ الرمز</span></button>
+    <div class="small"><span lang="en">The code works for a week.</span><span lang="ar">يبقى الرمز صالحًا لمدة أسبوع.</span></div>
+  </div>
+  <div class="panel" id="none" hidden>
+    <h1><span lang="en">Help</span><span lang="ar">المساعدة</span></h1>
+    <p><span lang="en">To report a problem, open Settings › About › Share logs on your TV and scan the code it shows.</span><span lang="ar">للإبلاغ عن مشكلة، افتح الإعدادات › حول التطبيق › مشاركة السجلات على تلفازك وامسح الرمز الذي يظهر.</span></p>
+    <a class="btn primary" href="https://github.com/slvjtr1/origin/issues"><span lang="en">Known issues</span><span lang="ar">المشكلات المعروفة</span></a>
+    <a class="btn ghost" href="../#help"><span lang="en">Questions and answers</span><span lang="ar">أسئلة وأجوبة</span></a>
+  </div>
+</main>
+<script>
+(function () {
+  /* #log=<code>&v=<version>, from Settings › About › Share logs */
+  var p = {}; location.hash.replace(/^#/, '').split('&').forEach(function (kv) { var i = kv.indexOf('='); if (i > 0) { try { p[kv.slice(0, i)] = decodeURIComponent(kv.slice(i + 1)); } catch (e) {} } });
+  var code = /^[A-Za-z0-9]{4}$/.test(p.log || '') ? p.log.toUpperCase() : '', v = /^[0-9.]{1,16}$/.test(p.v || '') ? p.v : '';
+  if (!code) { document.getElementById('none').hidden = false; return; }
+  document.getElementById('code').textContent = code;
+  function lines() {
+    var ar = originLang() === 'ar';
+    document.getElementById('vline').textContent = v ? (ar ? 'الإصدار ' : 'Version ') + v + ' · webOS' : '';
+  }
+  lines(); document.addEventListener('originlang', lines);
+  var body = 'Log code: ' + code + '\nVersion: ' + (v || '?') + ' (webOS)\n\nWhat happened:\n';
+  document.getElementById('report').href = 'https://github.com/slvjtr1/origin/issues/new?title=' + encodeURIComponent('Issue from the TV (' + code + ')') + '&body=' + encodeURIComponent(body);
+  document.getElementById('cp').onclick = function () { originCopy(code); };
+  document.getElementById('log').hidden = false;
+})();
+</script>
+</body>
+</html>

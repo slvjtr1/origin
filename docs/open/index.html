@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Open a link · Origin</title>
+<meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#0c0b11">
+<link rel="icon" href="../icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Readex+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../site.css">
+<script src="../site.js"></script>
+</head>
+<body class="single">
+<div class="wrap">
+  <nav class="top">
+    <a class="brand" href="../"><img src="../icon.png" alt=""><span>Origin</span></a>
+    <div class="navlinks"><button class="lang" data-lang-toggle><span lang="en">العربية</span><span lang="ar">English</span></button></div>
+  </nav>
+</div>
+<main class="wrap">
+  <div class="panel" id="ok" hidden>
+    <p><span lang="en">From your TV</span><span lang="ar">من تلفازك</span></p>
+    <h1 id="title"></h1>
+    <div class="host" id="host"></div>
+    <p><span lang="en">This link was sent by one of your addons. Open it only if you trust where it goes.</span><span lang="ar">أُرسل هذا الرابط من إحدى إضافاتك. افتحه فقط إذا كنت تثق بوجهته.</span></p>
+    <a class="btn primary" id="go" rel="noopener noreferrer"><span lang="en">Open the link</span><span lang="ar">افتح الرابط</span></a>
+    <button class="btn ghost" id="cp"><span lang="en">Copy the link</span><span lang="ar">انسخ الرابط</span></button>
+    <div class="small" id="full"></div>
+  </div>
+  <div class="panel" id="bad" hidden>
+    <h1><span lang="en">Nothing to open</span><span lang="ar">لا يوجد ما يُفتح</span></h1>
+    <p><span lang="en">This page opens links sent from the Origin app on your TV. Scan the code the app shows.</span><span lang="ar">تفتح هذه الصفحة الروابط المرسلة من تطبيق Origin على تلفازك. امسح الرمز الذي يعرضه التطبيق.</span></p>
+    <a class="btn ghost" href="../"><span lang="en">About the app</span><span lang="ar">عن التطبيق</span></a>
+  </div>
+</main>
+<script>
+(function () {
+  /* #u=<link>&t=<title>: after the #, so it never reaches a server. Only web links are opened, and only on a tap */
+  var p = {}; location.hash.replace(/^#/, '').split('&').forEach(function (kv) { var i = kv.indexOf('='); if (i > 0) { try { p[kv.slice(0, i)] = decodeURIComponent(kv.slice(i + 1).replace(/\+/g, ' ')); } catch (e) {} } });
+  var u = null; try { u = new URL(p.u || ''); } catch (e) {}
+  if (!u || (u.protocol !== 'https:' && u.protocol !== 'http:')) { document.getElementById('bad').hidden = false; return; }
+  var t = (p.t || '').slice(0, 140);
+  document.getElementById('title').textContent = t || u.hostname.replace(/^www\./, '');
+  document.getElementById('host').textContent = u.hostname;
+  document.getElementById('full').textContent = u.href.length > 160 ? u.href.slice(0, 160) + '…' : u.href;
+  document.getElementById('go').href = u.href;
+  document.getElementById('cp').onclick = function () { originCopy(u.href); };
+  document.getElementById('ok').hidden = false;
+})();
+</script>
+</body>
+</html>

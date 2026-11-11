@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Origin</title>
+<meta name="description" content="A native webOS app for Stremio addons on LG TVs, in English and Arabic.">
+<meta name="theme-color" content="#0c0b11">
+<link rel="icon" href="icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Readex+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="site.css">
+<script src="site.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <nav class="top">
+    <a class="brand" href="./"><img src="icon.png" alt=""><span>Origin</span></a>
+    <div class="navlinks">
+      <a class="opt" href="#install"><span lang="en">Install</span><span lang="ar">التثبيت</span></a>
+      <a class="opt" href="#updates"><span lang="en">Updates</span><span lang="ar">التحديثات</span></a>
+      <a class="opt" href="help/"><span lang="en">Help</span><span lang="ar">المساعدة</span></a>
+      <button class="lang" data-lang-toggle><span lang="en">العربية</span><span lang="ar">English</span></button>
+    </div>
+  </nav>
+
+  <header class="hero">
+    <img class="logo" src="logo-pill.png" alt="Origin">
+    <h1><span lang="en">Your Stremio, native on your LG TV</span><span lang="ar">Stremio على تلفاز LG، بتطبيق أصلي</span></h1>
+    <p class="lead"><span lang="en">Fast, smooth and made for the remote. Your own account and addons, in English or Arabic, with updates from inside the app.</span><span lang="ar">سريع وسلس ومصمم للريموت. حسابك وإضافاتك، بالعربية أو الإنجليزية، مع تحديثات من داخل التطبيق.</span></p>
+    <div class="cta">
+      <a class="btn primary" href="#install"><span lang="en">Install</span><span lang="ar">ثبّت التطبيق</span></a>
+      <a class="btn ghost" href="#updates"><span lang="en">What's new</span><span lang="ar">الجديد</span></a>
+    </div>
+    <div class="ver" id="ver"></div>
+  </header>
+
+  <section id="features">
+    <h2><span lang="en">Highlights</span><span lang="ar">أبرز المزايا</span></h2>
+    <p class="sub"><span lang="en">Everything below is on by default or one switch away in Settings.</span><span lang="ar">كل ما يلي مفعّل افتراضيًا أو بضغطة واحدة من الإعدادات.</span></p>
+    <div class="grid">
+      <div class="card"><div class="ic">◐</div><h3><span lang="en">Arabic from end to end</span><span lang="ar">العربية من البداية للنهاية</span></h3><p><span lang="en">The whole app in Arabic or English, with titles and descriptions in the language you choose. Built in, nothing to set up.</span><span lang="ar">التطبيق كله بالعربية أو الإنجليزية، والعناوين والأوصاف باللغة التي تختارها. جاهز دون أي إعداد.</span></p></div>
+      <div class="card"><div class="ic">▶</div><h3><span lang="en">Trailers on the whole screen</span><span lang="ar">إعلانات بملء الشاشة</span></h3><p><span lang="en">After five seconds the trailer fills the screen. Any key brings the page back.</span><span lang="ar">بعد خمس ثوانٍ يملأ الإعلان الشاشة، وأي زر يعيد الصفحة.</span></p></div>
+      <div class="card"><div class="ic">⌕</div><h3><span lang="en">Clean search</span><span lang="ar">بحث نظيف</span></h3><p><span lang="en">Real films and series only: no clips, fan uploads or adult titles. Faster too.</span><span lang="ar">أفلام ومسلسلات حقيقية فقط: بلا مقاطع أو رفع معجبين أو محتوى للبالغين، وأسرع.</span></p></div>
+      <div class="card"><div class="ic">◎</div><h3><span lang="en">No spoilers</span><span lang="ar">بلا حرق</span></h3><p><span lang="en">Stills and stories of unwatched episodes stay blurred until you watch them.</span><span lang="ar">صور الحلقات غير المشاهدة وقصصها تبقى مموّهة حتى تشاهدها.</span></p></div>
+      <div class="card"><div class="ic">Aa</div><h3><span lang="en">Subtitles your way</span><span lang="ar">الترجمة كما تحب</span></h3><p><span lang="en">Outline, shadow, six fonts and bold, back in sync with one press.</span><span lang="ar">حدود وظل وستة خطوط وخط عريض، ومزامنة بضغطة واحدة.</span></p></div>
+      <div class="card"><div class="ic">⤼</div><h3><span lang="en">Skip intro, recap and credits</span><span lang="ar">تخطي المقدمة والملخص والتتر</span></h3><p><span lang="en">A button at the right moment, or skipped by itself.</span><span lang="ar">زر في اللحظة المناسبة، أو تخطٍّ تلقائي.</span></p></div>
+      <div class="card"><div class="ic">★</div><h3><span lang="en">The best stream, in one press</span><span lang="ar">أفضل بث بضغطة</span></h3><p><span lang="en">Picked for your TV and connection, with quality tags on every source.</span><span lang="ar">يُختار لتلفازك واتصالك، مع وسوم الجودة لكل مصدر.</span></p></div>
+      <div class="card"><div class="ic">≡</div><h3><span lang="en">Your Home, your rows</span><span lang="ar">رئيسيتك كما تريد</span></h3><p><span lang="en">8, 12, 16 or 24 catalogs, exactly as many as you choose.</span><span lang="ar">8 أو 12 أو 16 أو 24 قائمة، بالعدد الذي تختاره تمامًا.</span></p></div>
+    </div>
+  </section>
+
+  <section id="install">
+    <h2><span lang="en">Install</span><span lang="ar">التثبيت</span></h2>
+    <p class="sub"><span lang="en">For LG TVs with webOS 3 or later, and Google TV and Android TV 9 or later. Once installed, new versions arrive from Settings › About.</span><span lang="ar">لتلفازات LG بنظام webOS 3 أو أحدث، ولـ Google TV وAndroid TV 9 أو أحدث. بعد التثبيت تصل الإصدارات الجديدة من الإعدادات › حول التطبيق.</span></p>
+    <div class="steps">
+      <div class="card">
+        <h3><span lang="en">Homebrew Channel</span><span lang="ar">Homebrew Channel</span> <span class="tag"><span lang="en">rooted TVs</span><span lang="ar">للتلفازات المروّتة</span></span></h3>
+        <ol class="list">
+          <li><span lang="en">Open Homebrew Channel › Settings › Add repository.</span><span lang="ar">افتح Homebrew Channel › الإعدادات › إضافة مستودع.</span></li>
+          <li><span lang="en">Add this address, then install Origin from the list.</span><span lang="ar">أضف هذا العنوان، ثم ثبّت Origin من القائمة.</span></li>
+        </ol>
+        <div class="copy"><input id="repo" readonly value="https://slvjtr1.github.io/origin/apps.json"><button data-copy="repo"><span lang="en">Copy</span><span lang="ar">نسخ</span></button></div>
+      </div>
+      <div class="card">
+        <h3><span lang="en">Developer Mode</span><span lang="ar">وضع المطوّر</span></h3>
+        <ol class="list">
+          <li><span lang="en">Download the latest</span><span lang="ar">نزّل أحدث ملف</span> <a href="https://github.com/slvjtr1/origin/releases/latest"><code>.ipk</code></a>.</li>
+          <li><span lang="en">Install it with</span><span lang="ar">ثبّته باستخدام</span> <a href="https://github.com/webosbrew/dev-manager-desktop">webOS Dev Manager</a> <span lang="en">or</span><span lang="ar">أو</span> <code>ares-install</code>.</li>
+          <li><span lang="en">Updates then install from inside the app.</span><span lang="ar">بعدها تُثبَّت التحديثات من داخل التطبيق.</span></li>
+        </ol>
+      </div>
+      <div class="card">
+        <h3><span lang="en">Google TV and Android TV</span><span lang="ar">Google TV وAndroid TV</span> <span class="tag"><span lang="en">2020 and later</span><span lang="ar">من 2020 وما بعدها</span></span></h3>
+        <ol class="list">
+          <li><span lang="en">Install Downloader on the TV and enter the code</span><span lang="ar">ثبّت تطبيق Downloader على التلفاز وأدخل الرمز</span> <code>2141492</code><span lang="en">: it downloads the latest</span><span lang="ar">: ينزّل أحدث ملف</span> <a href="https://github.com/slvjtr1/origin/releases/latest/download/Origin-AndroidTV.apk"><code>.apk</code></a>.</li>
+          <li><span lang="en">Allow installs from that app when Android asks, then install.</span><span lang="ar">اسمح بالتثبيت من ذلك التطبيق عندما يطلب Android، ثم ثبّت.</span></li>
+          <li><span lang="en">Updates then install from inside the app.</span><span lang="ar">بعدها تُثبَّت التحديثات من داخل التطبيق.</span></li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <section id="updates">
+    <h2><span lang="en">Updates</span><span lang="ar">التحديثات</span></h2>
+    <p class="sub"><span lang="en">The same list the app checks. The newest first.</span><span lang="ar">القائمة نفسها التي يتحقق منها التطبيق. الأحدث أولًا.</span></p>
+    <div id="rels"><p class="muted"><span lang="en">Loading…</span><span lang="ar">جارٍ التحميل…</span></p></div>
+  </section>
+
+  <section id="help">
+    <h2><span lang="en">Help</span><span lang="ar">المساعدة</span></h2>
+    <details><summary><span lang="en">Something went wrong. How do I report it?</span><span lang="ar">حدثت مشكلة. كيف أبلّغ عنها؟</span></summary>
+      <p><span lang="en">On the TV: Settings › About › Share logs. Scan the code with your phone: it opens a page here with your log code and a ready report.</span><span lang="ar">على التلفاز: الإعدادات › حول التطبيق › مشاركة السجلات. امسح الرمز بهاتفك: تفتح صفحة هنا فيها رمز السجل وبلاغ جاهز.</span></p></details>
+    <details><summary><span lang="en">An addon shows a link the TV can't open</span><span lang="ar">إضافة تعرض رابطًا لا يفتحه التلفاز</span></summary>
+      <p><span lang="en">The app shows a code. Scan it and this site tells you where the link goes, then opens it on your phone with one tap.</span><span lang="ar">يعرض التطبيق رمزًا. امسحه وسيخبرك هذا الموقع إلى أين يذهب الرابط، ثم يفتحه على هاتفك بضغطة.</span></p></details>
+    <details><summary><span lang="en">Titles stay in English</span><span lang="ar">العناوين تبقى بالإنجليزية</span></summary>
+      <p><span lang="en">Settings › Language › Titles and descriptions: choose Arabic, or Same as the app.</span><span lang="ar">الإعدادات › اللغة › العناوين والأوصاف: اختر العربية، أو «مثل التطبيق».</span></p></details>
+    <details><summary><span lang="en">Check for updates says it can't check</span><span lang="ar">«البحث عن تحديثات» لا يستطيع التحقق</span></summary>
+      <p><span lang="en">The app asks GitHub first and this site second. Check the TV's internet connection, then try again in a minute.</span><span lang="ar">يسأل التطبيق GitHub أولًا ثم هذا الموقع. تأكد من اتصال التلفاز بالإنترنت ثم أعد المحاولة بعد دقيقة.</span></p></details>
+  </section>
+
+  <footer>
+    <p><span lang="en">Origin is independent and unofficial, and is not affiliated with, endorsed by or sponsored by Stremio. Stremio™ is a trademark of its owner.</span><span lang="ar">Origin مستقل وغير رسمي، وليس تابعًا لـ Stremio ولا معتمدًا أو مدعومًا منها. Stremio™ علامة تجارية لمالكها.</span></p>
+    <p><span lang="en">The app ships empty and plays only the links your addons return. Titles and descriptions: TMDB (not endorsed or certified by TMDB).</span><span lang="ar">يأتي التطبيق فارغًا ولا يشغّل إلا الروابط التي تعيدها إضافاتك. العناوين والأوصاف: TMDB (دون اعتماد منها).</span></p>
+    <p><a href="https://github.com/slvjtr1/origin">GitHub</a> · GPL-3.0</p>
+  </footer>
+</div>
+<script>
+(function () {
+  var REPO = 'slvjtr1/origin', MAN = 'api/apps/tv.stremioorigin.app/manifest.json';
+  var box = document.getElementById('rels'), ver = document.getElementById('ver'), data = null;
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function inline(s) { return esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>'); }
+  function bullets(body) { var out = []; (body || '').split(/\r?\n/).some(function (l) { var m = /^\s*[-*]\s+(.+)/.exec(l); if (m) out.push(m[1]); else if (out.length && l.trim()) return true; return false; }); return out.slice(0, 8); }
+  function date(s) { try { return new Date(s).toLocaleDateString(originLang() === 'ar' ? 'ar' : 'en', { year: 'numeric', month: 'long', day: 'numeric' }); } catch (e) { return s.slice(0, 10); } }
+  function draw() {
+    if (!data) return;
+    var L = originLang(), h = '';
+    if (data.length) ver.textContent = (L === 'ar' ? 'أحدث إصدار: ' : 'Latest version: ') + data[0].v;
+    data.forEach(function (r, i) {
+      h += '<article class="rel"><header><h3>' + esc(r.v) + (i === 0 ? '<span class="latest">' + (L === 'ar' ? 'الأحدث' : 'Latest') + '</span>' : '') + '</h3>' + (r.d ? '<time>' + esc(date(r.d)) + '</time>' : '') + '</header>';
+      h += '<ul>' + r.n.map(function (x) { return '<li>' + inline(x) + '</li>'; }).join('') + '</ul>';
+      if (r.u) h += '<p><a href="' + esc(r.u) + '">' + (L === 'ar' ? 'التفاصيل والتنزيل' : 'Details and download') + ' →</a></p>';
+      h += '</article>';
+    });
+    box.innerHTML = h || '<p class="muted">' + (L === 'ar' ? 'لا توجد إصدارات بعد.' : 'No releases yet.') + '</p>';
+  }
+  function fromManifest() {
+    fetch(MAN, { cache: 'no-cache' }).then(function (r) { return r.json(); }).then(function (m) {
+      data = [{ v: m.version, d: '', n: m.notes || [], u: 'https://github.com/' + REPO + '/releases/latest' }]; draw();
+    }).catch(function () { box.innerHTML = '<p class="muted">' + (originLang() === 'ar' ? 'تعذّر تحميل التحديثات.' : 'Could not load the updates.') + '</p>'; });
+  }
+  fetch('https://api.github.com/repos/' + REPO + '/releases?per_page=12').then(function (r) { if (!r.ok) throw 0; return r.json(); }).then(function (list) {
+    data = list.filter(function (r) { return !r.draft && !r.prerelease; }).map(function (r) { return { v: r.tag_name.replace(/^v/, ''), d: r.published_at, n: bullets(r.body), u: r.html_url }; }); draw();
+  }).catch(fromManifest);
+  document.addEventListener('originlang', draw);
+})();
+</script>
+</body>
+</html>

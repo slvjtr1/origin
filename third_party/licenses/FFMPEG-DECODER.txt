@@ -1,0 +1,10 @@
+FFmpeg audio decoders for Media3 (Google TV / Android TV build only)
+
+The Android app links the prebuilt FFmpeg decoder extension for AndroidX Media3 published by the
+Jellyfin project (org.jellyfin.media3:media3-ffmpeg-decoder), which contains FFmpeg.
+
+  AndroidX Media3: Apache License 2.0, https://github.com/androidx/media
+  Jellyfin's build: GPL-3.0, https://github.com/jellyfin/jellyfin-media3-ffmpeg-decoder
+  FFmpeg: LGPL-2.1-or-later / GPL (as configured by that build), https://ffmpeg.org
+
+Sources for each are at the addresses above.

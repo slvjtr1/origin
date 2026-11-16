@@ -230,11 +230,23 @@ static void b64(const char *in, char *out, size_t cap) {
   out[o] = 0;
 }
 /* Settings › Subtitles › Only these languages: the default language and the second one; nothing chosen lets all through */
+static int name_eq(const char *a, const char *b) { for (; *a && *b; a++, b++) { int x = *a, y = *b; if (x >= 'A' && x <= 'Z') x += 32; if (y >= 'A' && y <= 'Z') y += 32; if (x != y) return 0; } return !*a && !*b; }
+/* a language an addon wrote as a code (ara, ar, ar-SA) or in full ("Arabic"); NULL: not one we know */
+static const char *lang_known(const char *lang) {
+  const char *n = subs_sub_name(lang); if (n) return n;
+  for (int i = 0; LANGS[i][0]; i++) if (name_eq(LANGS[i][1], lang)) return LANGS[i][1];
+  return NULL;
+}
+static int lang_is(const char *lang, const char *known, const char *want) {
+  if (!*want) return 0; if (subs_lang_match(lang, want)) return 1;
+  const char *wn = subs_lang_name(want); return wn && !strcmp(wn, known);
+}
 int subs_wanted(const char *lang) {
   if (strcmp(store_get("subsOnly", "true"), "true")) return 1;
   const char *a = store_get("subsLang", "eng"), *b = store_get("subsLang2", "");
   if (!*a && !*b) return 1;
-  return (*a && subs_lang_match(lang, a)) || (*b && subs_lang_match(lang, b));
+  const char *n = lang && *lang ? lang_known(lang) : NULL; if (!n) return 1; /* no language given, or one we cannot name: never hidden */
+  return lang_is(lang, n, a) || lang_is(lang, n, b);
 }
 int subs_os_mode(void) { const char *m = store_get("osSubs", "ai"); return !strcmp(m, "off") ? 0 : !strcmp(m, "human") ? 1 : 2; } /* 0 off, 1 made by people only, 2 machine-translated ones too */
 int subs_os_base(char *out, size_t cap) {
@@ -243,6 +255,7 @@ int subs_os_base(char *out, size_t cap) {
   if (n) { snprintf(nm, sizeof nm, "%s", n); for (char *p = nm; *p; p++) { if (*p >= 'A' && *p <= 'Z') *p += 32; if (!(*p >= 'a' && *p <= 'z')) { nm[0] = 0; break; } } } /* (a name of one plain word: the service's own spelling) */
   char nm2[48] = ""; const char *n2 = subs_lang_name(store_get("subsLang2", ""));
   if (n2) { snprintf(nm2, sizeof nm2, "%s", n2); for (char *p = nm2; *p; p++) { if (*p >= 'A' && *p <= 'Z') *p += 32; if (!(*p >= 'a' && *p <= 'z')) { nm2[0] = 0; break; } } }
+  if (!nm[0] && nm2[0]) { snprintf(nm, sizeof nm, "%s", nm2); nm2[0] = 0; } /* only the second language chosen: it is the one asked for */
   if (nm[0] && nm2[0] && strcmp(nm, nm2)) snprintf(cfg, sizeof cfg, "{\"langs\":[\"%s\",\"%s\"],\"source\":\"all\",\"aiTranslated\":%s,\"autoAdjustment\":true}", nm, nm2, m == 2 ? "true" : "false");
   else if (nm[0] && strcmp(nm, "english")) snprintf(cfg, sizeof cfg, "{\"langs\":[\"%s\",\"english\"],\"source\":\"all\",\"aiTranslated\":%s,\"autoAdjustment\":true}", nm, m == 2 ? "true" : "false");
   else snprintf(cfg, sizeof cfg, "{\"langs\":[\"english\"],\"source\":\"all\",\"aiTranslated\":%s,\"autoAdjustment\":true}", m == 2 ? "true" : "false");

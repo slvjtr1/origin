@@ -1,15 +1,15 @@
 {
   "id": "tv.stremioorigin.app",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "type": "native",
   "title": "Origin",
   "appDescription": "Your own Stremio account and addons on your LG TV, in English or Arabic: artwork and full-screen trailers, the best stream in one press, styled subtitles, clean search. Unofficial.",
   "iconUri": "https://slvjtr1.github.io/origin/icon.png",
   "sourceUrl": "https://github.com/slvjtr1/origin",
   "rootRequired": false,
-  "ipkUrl": "https://github.com/slvjtr1/origin/releases/download/v1.3.0/tv.stremioorigin.app_1.3.0_arm.ipk",
+  "ipkUrl": "https://github.com/slvjtr1/origin/releases/download/v1.3.1/tv.stremioorigin.app_1.3.1_arm.ipk",
   "ipkHash": {
-    "sha256": "bf374c66e92f3aeb64f93e6be766cfde69a2c5dae7e90ac1df0cd45728de7e8e"
+    "sha256": "ec57cdc7aef7e5f0b55f833f741586628f9666e9b6bed33089f919869b848a6b"
   },
   "notes": [
     "Only your subtitle languages: Choose a default and a second subtitle language, Arabic and English for example: subtitles in other languages are left out, from your addons and OpenSubtitles alike. Settings, Subtitles.",

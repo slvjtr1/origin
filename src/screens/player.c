@@ -412,6 +412,12 @@ static void auto_sub(void) {
   if (!P.embKnown && !P.embWaitOver) { if (!P.embWaitAt) P.embWaitAt = now_() + 8; return; }
   int em = -1; for (int j = 0; j < P.nEmb; j++) if (lang_match(P.emb[j].lang, w) && (em < 0 || (P.emb[em].forced && !P.emb[j].forced))) em = j;
   if (em >= 0) { P.autoSubDone = 1; fprintf(stderr, "[subs] chosen by itself: the file's own track (nothing downloaded has it)\n"); set_emb_sub(P.emb[em].idx); return; }
+  /* 4. nothing anywhere in the default language: the second one (Settings > Subtitles), in the same order */
+  const char *w2 = store_get("subsLang2", ""); if (!*w2 || lang_match(w2, w)) return;
+  for (int i = 0; i < P.nAdx; i++) if (lang_match(P.adx[i].lang, w2)) { P.autoSubDone = 1; fprintf(stderr, "[subs] chosen by itself: an addon's, second language (%s)\n", P.adx[i].addon); set_ext_sub(2, &P.adx[i]); sync_auto_arm(); return; }
+  for (int i = 0; i < P.nExt; i++) if (lang_match(P.ext[i].lang, w2)) { P.autoSubDone = 1; fprintf(stderr, "[subs] chosen by itself: OpenSubtitles, second language\n"); set_ext_sub(1, &P.ext[i]); sync_auto_arm(); return; }
+  em = -1; for (int j = 0; j < P.nEmb; j++) if (lang_match(P.emb[j].lang, w2) && (em < 0 || (P.emb[em].forced && !P.emb[j].forced))) em = j;
+  if (em >= 0) { P.autoSubDone = 1; fprintf(stderr, "[subs] chosen by itself: the file's own track, second language\n"); set_emb_sub(P.emb[em].idx); return; }
 }
 /* a trailer's captions (IMDb's or YouTube's): handed over with the trailer, read when the CC button turns them on */
 static TrailerSub trSubs[TRAILER_MAX_SUBS], trNext[TRAILER_MAX_SUBS]; static int trSubsN, trNextN;

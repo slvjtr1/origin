@@ -16,20 +16,21 @@
       "fullDescriptionUrl": "apps/tv.stremioorigin.app/full_description.html",
       "manifest": {
         "id": "tv.stremioorigin.app",
-        "version": "1.3.1",
+        "version": "1.4.0",
         "type": "native",
         "title": "Origin",
         "appDescription": "Your own Stremio account and addons on your LG TV, in English or Arabic: artwork and full-screen trailers, the best stream in one press, styled subtitles, clean search. Unofficial.",
         "iconUri": "https://slvjtr1.github.io/origin/icon.png",
         "sourceUrl": "https://github.com/slvjtr1/origin",
         "rootRequired": false,
-        "ipkUrl": "https://github.com/slvjtr1/origin/releases/download/v1.3.1/tv.stremioorigin.app_1.3.1_arm.ipk",
+        "ipkUrl": "https://github.com/slvjtr1/origin/releases/download/v1.4.0/tv.stremioorigin.app_1.4.0_arm.ipk",
         "ipkHash": {
-          "sha256": "ec57cdc7aef7e5f0b55f833f741586628f9666e9b6bed33089f919869b848a6b"
+          "sha256": "3124d641e117ab1e5a85dc4710367d89ae7f4f67e81de6fb8f1274207e951685"
         },
         "notes": [
-          "Only your subtitle languages: Choose a default and a second subtitle language, Arabic and English for example: subtitles in other languages are left out, from your addons and OpenSubtitles alike. Settings, Subtitles.",
-          "English only, for now: ORIGIN is in English for the time being. We are sorry to everyone who used it in Arabic: Arabic caused big problems in building the app. Arabic subtitles still work fully."
+          "Lighter on your TV: ORIGIN hands memory back to the TV at once: when a film starts, when you leave it, and when you press Home.",
+          "Plug in a drive, that is all: A new USB drive is checked in seconds and torrents buffer on it by themselves. An SSD works best.",
+          "Your subtitle languages, every time: Found whatever way an addon names the language. Your second language steps in when the first has none."
         ]
       }
     }

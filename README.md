@@ -33,7 +33,7 @@
 | **A source fails, the next one plays** | When a source does not play, the next best one starts by itself, then a third. If all three fail, the page says so and lets you choose from them. |
 | **Super clean sources** | Programs, archives and fake files are left out. So are sources of another episode or season, of another title with a similar name (a spin-off, a sequel, a film of another year) and cinema recordings; a torrent pack plays the episode you opened. The list says how many were left out and shows them if you ask. |
 | **The wrong video never comes back** | A source that plays something else than what you opened is noticed by the player (the file's own title, its length), skipped, and kept out of the lists from then on. You can mark one yourself from the sources list. |
-| **Torrents built in** | Played straight from the swarm with a buffer sized to your TV's memory, or kept on a USB drive on LG webOS. |
+| **Torrents built in** | Played straight from the swarm with a buffer sized to your TV's memory. On LG webOS a USB drive is set up by itself when you plug it in (an SSD works best). |
 | **Skip intro, recap and credits** | A button at the right moment. Press OK, or let it skip by itself. |
 | **Next episode** | Starts by itself, from the same source group when there is one. |
 | **Trailers** | A title's trailer plays behind its page and fills the screen after five seconds, in the sharpest picture its source has. |

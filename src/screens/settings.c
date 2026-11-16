@@ -69,6 +69,7 @@ static const Opt SHGT[] = { { "-6", "\xe2\x88\x92" "6%" }, { "-4", "\xe2\x88\x92
 static const Opt BGS[] = { { "0", "None" }, { "1", "Solid" }, { ".6", "Transparent" } };
 static const Opt ASSO[] = { { "styled", "Styled" }, { "plain", "Plain" } };
 static const Opt SS_OPTS[] = { { "0", "Off" }, { "1", "1 min" }, { "2", "2 min" }, { "5", "5 min" }, { "10", "10 min" } };
+static const Opt CLEANO[] = { { "super", "Super clean" }, { "true", "Clean" }, { "false", "Off" } }; /* what the addons list, read before it is shown (core/srcfilter) */
 static const Opt SKIPO[] = { { "button", "Show a button" }, { "auto", "Automatically" }, { "off", "Off" } }; /* an intro, a recap or the credits: a button to skip (the default), skipped by itself, nothing */
 static const Opt CLOCKO[] = { { "24", "24-hour" }, { "12", "12-hour" } };
 static const Opt HROWS[] = { { "8", "8" }, { "12", "12" }, { "16", "16" }, { "24", "24" } }; /* the addons' catalogs on Home (stremio.c: home_rows) */
@@ -77,7 +78,7 @@ static const Opt CORNERO[] = { { "round", "Round" }, { "soft", "Soft" }, { "squa
 static const Opt ACCENT_OPTS[] = { { "logo", "From the logo" }, { "adaptive", "From the artwork" }, { "purple", "Purple" }, { "violet", "Violet" }, { "fuchsia", "Fuchsia" }, { "pink", "Pink" }, { "rose", "Rose" }, { "red", "Red" }, { "orange", "Orange" }, { "amber", "Amber" }, { "gold", "Gold" }, { "lime", "Lime" }, { "green", "Green" }, { "emerald", "Emerald" }, { "teal", "Teal" }, { "cyan", "Cyan" }, { "sky", "Sky" }, { "blue", "Blue" }, { "indigo", "Indigo" }, { "graphite", "Graphite" } };
 #define NCAT 11
 #define MAXROWS 48
-static Setting playBase[16], playS[17], subsBase[19], subsS[19], audS[6], lookS[9], langS[3], keyS[4], addonS[40], acctS[1], supS[8], picS[6], accS[8];
+static Setting playBase[17], playS[19], subsBase[20], subsS[20], audS[6], lookS[9], langS[3], keyS[4], addonS[40], acctS[1], supS[8], picS[6], accS[8];
 static Cat cats[NCAT]; static int ncat; /* (Keys leaves when this build carries every key) */
 static int cat_of(const Setting *opts) { for (int i = 0; i < ncat; i++) if (cats[i].opts == opts) return i; return -1; }
 
@@ -178,7 +179,7 @@ static const char *const RESET_KEYS[] = { "accent", "animeAudioTrack", "betaUpda
   "bingeWatch", "enableNextVideo", "blurUnseen", "clockFmt", "defaultAudioTrack", "dtsMode", "audioPassthrough", "dv7Convert", "enableDefaultAudioTrack", "homeRows",
   "metaLang", "nerdStats", "cleanSources", "filmEnhance", "gpuUpscale", "searchKnownOnly", "seekStep", "skipIntro", "skipShowSec", "ssDelay", "subsAssStyle", "subsAuto", "subsBgStyle", "subsBold", "subsColor",
   "subsFollow", "subsFont", "subsLang", "subsOutline", "subsOutlineColor", "subsOutlineWidth", "subsPos", "subsShadow", "subsShadowDist",
-  "subsShadowSoft", "subsShadowStrength", "subtitleSize", "uiSound", "uiSoundVol", "reduceMotion", "animeEnhance", "brightBoost", "darkSee", "voiceClear", "evenVolume", "subsNoSdh", "kbLang", "libSort", "osSubs", "liteMode", "ytHd", NULL };
+  "subsShadowSoft", "subsShadowStrength", "subtitleSize", "uiSound", "uiSoundVol", "reduceMotion", "animeEnhance", "brightBoost", "darkSee", "voiceClear", "evenVolume", "subsNoSdh", "subsNoAds", "kbLang", "libSort", "osSubs", "liteMode", "ytHd", NULL };
 static void enter(const void *p); static void show_cat(int i, int dir);
 static void do_reset(void *ud) { (void)ud;
   for (int i = 0; RESET_KEYS[i]; i++) store_remove(RESET_KEYS[i]);
@@ -195,6 +196,8 @@ static void play_layout(void) {
   playS[n++] = playBase[4]; /* the best stream first */
   playS[n++] = playBase[9];
   playS[n++] = playBase[13]; /* what the addons list, cleaned */
+  if (sb_src_bad_count() > 0) { char k[12]; snprintf(k, sizeof k, "%d", sb_src_bad_count()); /* the sources marked as the wrong video: a way back for them */
+    set_act(&playBase[16], "__srcBack", T("Bring back hidden sources"), T1("{n} source(s) marked as the wrong video stay out of the lists. OK to let them back in", "n", k)); playBase[16].raw = 1; playBase[16].sub = 1; playS[n++] = playBase[16]; }
 #ifdef SB_ANDROID
   playS[n++] = playBase[14]; /* the picture through the graphics chip */
 #endif
@@ -218,6 +221,7 @@ static void subs_layout(void) {
   subsS[n++] = subsBase[15]; /* picked by themselves (on: in the language under it) */
   subsS[n++] = subsBase[16]; /* kept in sync while the film plays */
   subsS[n++] = subsBase[17]; /* without [coughs] and the like */
+  subsS[n++] = subsBase[19]; /* without adverts and credits */
   subsS[n++] = subsBase[18]; /* the built-in OpenSubtitles */
   for (int i = 0; i < 6; i++) subsS[n++] = subsBase[i]; /* language, size, font, bold, colour, the outline's switch */
   if (ol) { subsS[n++] = subsBase[6]; subsS[n++] = subsBase[7]; }
@@ -243,7 +247,7 @@ static void build(void) {
   set_s(&playBase[9], "bestRow", "Best match for this TV", "First in the streams: what this TV plays best, in the title’s own language, subtitles named", OO, 2, "true");
   set_s(&playBase[14], "gpuUpscale", "Upscale films and series", "Each frame redrawn by the graphics chip: lower resolutions brought up to 1080p and detail sharpened where the picture allows. HD and below; HDR and 4K stay as they are", GUPL, 4, "off");
   set_s(&playBase[15], "ytHd", "YouTube trailers in 1080p", "Warning: a trailer may take longer to start, and a TV before webOS 4 cannot play them (the usual 360p one plays after a moment). Trailers from IMDb are always at their best", OO, 2, "false");
-  set_s(&playBase[13], "cleanSources", "Clean sources", "Leaves out programs, archives and fake files, and sources of another episode than the one you opened", OO, 2, "true");
+  set_s(&playBase[13], "cleanSources", "Clean sources", "Clean: no fake files, no other episodes. Super clean: also no other title of a similar name, no cinema recordings, and a source that played the wrong video never comes back", CLEANO, 3, "super");
   set_s(&playBase[11], "searchKnownOnly", "Search well-known services only", "Results are films and series on Netflix, Prime Video, Disney+ and the like", OO, 2, "true");
   set_s(&playBase[10], "blurUnseen", "Blur unwatched episodes", "Their pictures stay blurred and their stories hidden until you watch them: no spoilers", OO, 2, "false");
   set_s(&playBase[12], "skipShowSec", "Skip button time", "How long the Skip button stays before it goes by itself", SEEK, 5, "10");
@@ -251,6 +255,7 @@ static void build(void) {
   set_s(&playBase[6], "bgTrailerVol", "Volume", "The sound comes up softly to this level", SVOL, 10, "70"); playBase[6].sub = 1; /* (shown right under the trailers while they are on: play_layout; drawn as theirs, set in) */
   usb_row();
   set_s(&subsBase[15], "subsAuto", "Turn on subtitles automatically", "When a film starts: your addons' first, else OpenSubtitles, else the film's own track; synced quietly", OO, 2, "true");
+  set_s(&subsBase[19], "subsNoAds", "Hide adverts and credits", "Lines that advertise a site or name who made the subtitles are left out", OO, 2, "true");
   set_s(&subsBase[17], "subsNoSdh", "Hide sound descriptions", "[coughs], (gunshots) and speakers' names left out of the lines", OO, 2, "true");
   set_s(&subsBase[16], "subsFollow", "Keep subtitles in sync", "Checked again every few minutes in the background; moved only when they drift", OO, 2, "true");
   set_s(&subsBase[18], "osSubs", "OpenSubtitles", "Built in, the Pro service: with subtitles translated by AI when no person has made one, made by people only, or off", OSM, 3, "ai");
@@ -552,6 +557,7 @@ static int key(int k) {
       if (!strcmp(op->k, "__sync")) sync_now(); else if (!strcmp(op->k, "__logs")) logcard_show(); else if (!strcmp(op->k, "__guide")) welcome_show_guide();
       else if (!strcmp(op->k, "__support")) { if (welcome_github_url()[0]) { supWant = !supWant; tween_to(&supK, (float)supWant, 0.5f, EASE_IN_OUT); orbs_pulse(supWant ? ORB_RIGHT : ORB_LEFT, 0.6f); } } /* the other code, turned over */ else if (!strcmp(op->k, "__upd")) update_install(); else if (!strcmp(op->k, "__check")) update_check(1); else if (!strcmp(op->k, "__logout")) logout();
       else if (!strcmp(op->k, "__accAdd")) accounts_add();
+      else if (!strcmp(op->k, "__srcBack")) { sb_src_bad_clear(); toast(T("Hidden sources are back in the lists"), 2500, NULL); play_layout(); S.dirty = 1; return 1; }
       else if (!strncmp(op->k, "__acc", 5) && op->k[5] >= '0' && op->k[5] <= '9') accounts_switch(atoi(op->k + 5));
       else if (!strcmp(op->k, "__reset")) confirm_show(T("Reset all settings?"), T("Every setting goes back as it came. Your account, library and addons stay as they are."), T("Reset"), do_reset, NULL);
       return 1; } /* (only Log out signs out: a row with no action of its own does nothing) */

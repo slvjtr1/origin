@@ -23,6 +23,7 @@ static int tc(const char *s, double *out, const char **end) {
 static int cmp_cue(const void *a, const void *b) { double x = ((const Cue *)a)->s, y = ((const Cue *)b)->s; return x < y ? -1 : x > y; }
 static void cue_add(Cue **cues, int *n, int *cap, double s, double e, const char *t) {
   if (strstr(t, "OpenSubtitles v3")) return; /* (the service's own notice at the head of its files: not a line of the film) */
+  if (sub_ads_hide && sub_is_ad(t)) return; /* a site's advert, the file's credits */
   char *c = strdup(t); if (!c) return; if (sub_sdh_hide) sub_strip_sdh(c); sub_clean(c); if (!*c) { free(c); return; } /* the line without its clutter (every file: the addons', the AI-translated ones, OpenSubtitles'); nothing left: no line */
   if (*n == *cap) { *cap = *cap ? *cap * 2 : 256; *cues = realloc(*cues, *cap * sizeof **cues); }
   (*cues)[*n].s = s; (*cues)[*n].e = e; (*cues)[*n].t = c; (*n)++;
@@ -35,18 +36,8 @@ static size_t put_utf8(char *o, unsigned c) {
   if (c < 0x10000) { o[0] = (char)(0xe0 | c >> 12); o[1] = (char)(0x80 | ((c >> 6) & 63)); o[2] = (char)(0x80 | (c & 63)); return 3; }
   o[0] = (char)(0xf0 | c >> 18); o[1] = (char)(0x80 | ((c >> 12) & 63)); o[2] = (char)(0x80 | ((c >> 6) & 63)); o[3] = (char)(0x80 | (c & 63)); return 4;
 }
-static int utf8_ok(const unsigned char *b, size_t n) {
-  for (size_t i = 0; i < n;) { unsigned c = b[i]; int k = c < 0x80 ? 0 : (c & 0xe0) == 0xc0 ? 1 : (c & 0xf0) == 0xe0 ? 2 : (c & 0xf8) == 0xf0 ? 3 : -1;
-    if (k < 0 || (k == 1 && c < 0xc2) || i + k >= n) return 0;
-    for (int j = 1; j <= k; j++) if ((b[i + j] & 0xc0) != 0x80) return 0;
-    i += k + 1; }
-  return 1;
-}
-/* Windows-1252's 0x80-0x9F (the rest of the byte range is Latin-1 as it stands) */
-static const unsigned short CP1252[32] = { 0x20ac, 0xfffd, 0x201a, 0x0192, 0x201e, 0x2026, 0x2020, 0x2021, 0x02c6, 0x2030, 0x0160, 0x2039, 0x0152, 0xfffd, 0x017d, 0xfffd,
-  0xfffd, 0x2018, 0x2019, 0x201c, 0x201d, 0x2022, 0x2013, 0x2014, 0x02dc, 0x2122, 0x0161, 0x203a, 0x0153, 0xfffd, 0x017e, 0x0178 };
 /* subtitle files come in whatever their authors saved: UTF-16 (with a BOM, or told by its zero bytes), UTF-8 (BOM or not),
-   else the Windows code page most old SRT files use. Line ends become "\n" whatever they were. malloc'd */
+   else an old Windows code page: the Arabic one when the bytes read as Arabic, else the Western one. Line ends become "\n" whatever they were. malloc'd */
 static char *to_text(const unsigned char *b, size_t n) {
   int be = -1; /* UTF-16: 0 little-endian, 1 big-endian */
   if (n >= 2 && b[0] == 0xff && b[1] == 0xfe) { be = 0; b += 2; n -= 2; }
@@ -58,8 +49,8 @@ static char *to_text(const unsigned char *b, size_t n) {
   if (be >= 0) for (size_t i = 0; i + 1 < n; i += 2) { unsigned c = be ? (unsigned)(b[i] << 8 | b[i + 1]) : (unsigned)(b[i + 1] << 8 | b[i]);
       if (c >= 0xd800 && c < 0xdc00 && i + 3 < n) { unsigned d = be ? (unsigned)(b[i + 2] << 8 | b[i + 3]) : (unsigned)(b[i + 3] << 8 | b[i + 2]); if (d >= 0xdc00 && d < 0xe000) { c = 0x10000 + ((c - 0xd800) << 10) + (d - 0xdc00); i += 2; } }
       if (c) o += put_utf8(out + o, c); }
-  else if (utf8_ok(b, n)) { for (size_t i = 0; i < n; i++) if (b[i]) out[o++] = (char)b[i]; }
-  else for (size_t i = 0; i < n; i++) { unsigned c = b[i]; if (!c) continue; o += put_utf8(out + o, c >= 0x80 && c < 0xa0 ? CP1252[c - 0x80] : c); }
+  else if (sub_utf8_ok(b, n)) { for (size_t i = 0; i < n; i++) if (b[i]) out[o++] = (char)b[i]; }
+  else o = sub_bytes_utf8(b, n, -1, out);
   out[o] = 0;
   size_t w = 0; for (size_t i = 0; i < o; i++) { if (out[i] == '\r') { out[w++] = '\n'; if (out[i + 1] == '\n') i++; } else out[w++] = out[i]; }
   out[w] = 0; return out;
@@ -85,7 +76,7 @@ static int parse_ass(const char *txt, Cue **out) {
     double s = ass_time(f[fs]), e = ass_time(f[fe]); if (s < 0 || e <= s) continue;
     const char *t = f[ft]; char text[2048]; size_t o = 0; int drawing = 0;
     for (size_t i = 0; t[i] && o < sizeof text - 4;) {
-      if (t[i] == '{') { const char *z = strchr(t + i, '}'); if (!z) break; for (const char *q = t + i; q < z; q++) if (q[0] == '\\' && q[1] == 'p' && q[2] >= '0' && q[2] <= '9') drawing = q[2] != '0'; i = (size_t)(z - t) + 1; continue; }
+      if (t[i] == '{' && strchr(t + i, '}')) { const char *z = strchr(t + i, '}'); for (const char *q = t + i; q < z; q++) if (q[0] == '\\' && q[1] == 'p' && q[2] >= '0' && q[2] <= '9') drawing = q[2] != '0'; i = (size_t)(z - t) + 1; continue; }
       if (t[i] == '\\' && (t[i + 1] == 'N' || t[i + 1] == 'n')) { while (o && text[o - 1] == ' ') o--; text[o++] = '\n'; i += 2; continue; }
       if (t[i] == '\\' && t[i + 1] == 'h') { text[o++] = ' '; i += 2; continue; }
       if (!drawing) text[o++] = t[i]; i++; } /* vector drawings are shapes, not words */
@@ -108,7 +99,7 @@ int subs_parse(const char *txt, Cue **out) {
     if (arrow) { char *ls = arrow; while (ls > blk && ls[-1] != '\n') ls--; double s, e; const char *p1, *p2; const char *a = ls; while (*a == ' ') a++;
       if (tc(a, &s, &p1)) { const char *b = arrow + 3; while (*b == ' ') b++; if (tc(b, &e, &p2)) {
         char *tl = strchr(arrow, '\n'); char text[2048] = ""; size_t o = 0;
-        if (tl) { tl++; int tag = 0, brace = 0; for (const char *c = tl; *c && o < sizeof text - 1; c++) { if (*c == '<') { tag = 1; continue; } if (*c == '>') { tag = 0; continue; } if (*c == '{') { brace = 1; continue; } if (*c == '}') { brace = 0; continue; } if (!tag && !brace) text[o++] = *c; } text[o] = 0; }
+        if (tl) { tl++; o = strlen(tl); if (o > sizeof text - 1) o = sizeof text - 1; memcpy(text, tl, o); text[o] = 0; sub_strip_tags(text); } /* (only what is markup goes: a stray "<" no longer takes the rest of the line with it) */
         char *t0 = text; while (*t0 == ' ' || *t0 == '\n') t0++; char *t1 = t0 + strlen(t0); while (t1 > t0 && (t1[-1] == ' ' || t1[-1] == '\n')) *--t1 = 0;
         if (*t0 && e > s) cue_add(&cues, &n, &cap, s, e, t0); } } }
     blk = next;

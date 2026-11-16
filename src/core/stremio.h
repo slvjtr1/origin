@@ -3,6 +3,7 @@
    Results come back on the main thread through callbacks. */
 #ifndef SB_STREMIO_H
 #define SB_STREMIO_H
+#include "core/srcfilter.h"
 #include "cJSON.h"
 
 #define CINEMETA "https://v3-cinemeta.strem.io"
@@ -110,6 +111,17 @@ unsigned sb_streams_ex(const char *type, const char *vid, StreamPartCb part, Str
 int sb_stream_addons(const char *type, const char *vid, char (*names)[96], int max);
 unsigned sb_streams_one(const char *type, const char *vid, int which, StreamPartCb part, StreamDoneCb done, void *ud);
 void sb_stream_info(const Stream *s, char *out, size_t cap);
+/* Clean sources (Settings > Playback): 0 off, 1 clean, 2 super clean (the title each source names is read too) */
+int  sb_clean_level(void);
+void sb_src_know(const char *type, const char *id);    /* super clean: asks what other titles share this one's name (once per title) */
+int  sb_src_want(const char *type, const char *vid, SrcWant *w); /* the title a video is of, as the reading needs it; returns the episode counted from the series' first (0 unknown) */
+int  sb_streams_hidden(unsigned tok);                   /* how many sources that request has left out so far */
+void sb_streams_raw_next(void);                         /* the next request: everything the addons list, nothing left out */
+/* a source that turned out to be another video than the one opened: never listed or picked for it again */
+int  sb_src_bad(const char *vid, const Stream *s);
+void sb_src_bad_add(const char *vid, const Stream *s);
+int  sb_src_bad_count(void);
+void sb_src_bad_clear(void);
 /* the last played stream of a title/episode */
 int  sb_resume_stream(const char *id, const char *vid, Stream *out);
 void sb_remember_stream(const char *id, const char *vid, const Stream *s);

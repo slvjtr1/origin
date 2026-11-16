@@ -937,7 +937,7 @@ int app_reduce_motion(void) { static unsigned ser = ~0u; static int on; if (stor
 void app_tick(float dt) {
   app_reduce_motion(); /* (the knob follows the setting) */
   tvtune_tick(); accounts_tick();
-  { static unsigned ss; if (store_serial() != ss) { ss = store_serial(); sub_sdh_hide = strcmp(store_get("subsNoSdh", "true"), "false") != 0; } } /* Settings > Subtitles > Hide sound descriptions */
+  { static unsigned ss; if (store_serial() != ss) { ss = store_serial(); sub_sdh_hide = strcmp(store_get("subsNoSdh", "true"), "false") != 0; sub_ads_hide = strcmp(store_get("subsNoAds", "true"), "false") != 0; } } /* Settings > Subtitles > Hide sound descriptions */
   DT = dt; NOW = SDL_GetTicks() / 1000.0; FRAME++;
   ptr_frame(); ptr_idle();
   { static int swelled; if (app_hold_progress() > 0 && !swelled) { swelled = 1; sound_play(SND_HOLD); } else if (!okHold.down) swelled = 0; } /* holding OK: a low swell as the line starts round */

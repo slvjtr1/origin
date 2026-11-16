@@ -1,6 +1,7 @@
 #include "platform/plat.h"
 #include "core/mkvsubs.h"
 #include "core/net.h"
+#include "core/subclean.h"
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,7 +44,7 @@
 #define P2P_CHAPTERS_MAX (64LL * 1024 * 1024) /* torrents: Chapters stored further in would fetch pieces there */
 
 enum { ID_EBML = 0x1A45DFA3, ID_SEGMENT = 0x18538067, ID_SEEKHEAD = 0x114D9B74, ID_SEEK = 0x4DBB, ID_SEEKID = 0x53AB, ID_SEEKPOS = 0x53AC,
-  ID_INFO = 0x1549A966, ID_TSCALE = 0x2AD7B1, ID_DURATION = 0x4489, ID_TRACKS = 0x1654AE6B, ID_TRACKENTRY = 0xAE,
+  ID_INFO = 0x1549A966, ID_TITLE = 0x7BA9, ID_TSCALE = 0x2AD7B1, ID_DURATION = 0x4489, ID_TRACKS = 0x1654AE6B, ID_TRACKENTRY = 0xAE,
   ID_TRACKNUM = 0xD7, ID_TRACKTYPE = 0x83, ID_CODECID = 0x86, ID_CODECPRIV = 0x63A2, ID_LANG = 0x22B59C, ID_LANGBCP = 0x22B59D,
   ID_NAME = 0x536E, ID_FLAGDEFAULT = 0x88, ID_FLAGFORCED = 0x55AA, ID_FLAGHI = 0x55AB,
   ID_ENCODINGS = 0x6D80, ID_ENCODING = 0x6240, ID_COMPRESSION = 0x5034, ID_COMPALGO = 0x4254, ID_COMPSETTINGS = 0x4255, ID_ENCRYPTION = 0x5035,
@@ -102,7 +103,7 @@ typedef struct {
 typedef struct { double t, d; long long cl; long rel; int num; } Point;
 typedef struct { long long cl; double t; } ClusterT;
 typedef struct {
-  long long segStart, segEnd, size, cuesPos, tracksPos, chapPos, firstCluster, attachPos; double tscale, duration;
+  long long segStart, segEnd, size, cuesPos, tracksPos, chapPos, firstCluster, attachPos; double tscale, duration; char title[200];
   Track tr[64]; int ntr; int haveTracks;
   MkvChapter ch[64]; int nch; int haveChapters;
   Point *pts; int npts; ClusterT *cls; int ncls;
@@ -246,6 +247,7 @@ static int each_seekhead(void *c_, unsigned id, long d, long long sz, long at) {
 static int each_info(void *c_, unsigned id, long d, long long sz, long at) { Ctx *c = c_; (void)at; if (sz < 0) return 0;
   if (id == ID_TSCALE) { c->info->tscale = (double)read_uint(c->b, d, sz); if (c->info->tscale <= 0) c->info->tscale = 1000000; }
   else if (id == ID_DURATION) c->info->duration = read_float(c->b, d, sz);
+  else if (id == ID_TITLE) read_str(c->b, d, sz, c->info->title, sizeof c->info->title);
   return 0; }
 static int each_segment(void *c_, unsigned id, long d, long long sz, long at) { Ctx *c = c_; Info *i = c->info;
   if (id == ID_CLUSTER) { i->firstCluster = at; return 1; }
@@ -404,13 +406,8 @@ static int text_line(const char *payload, double s, double e, Line *out) {
   const char *am = strstr(payload, "{\\an"); if (am && isdigit((unsigned char)am[4])) an = am[4] - '0';
   { const char *t = payload; while (isspace((unsigned char)*t)) t++; if (!strncasecmp(t, "<i>", 3)) { const char *z = payload + n; while (z > payload && isspace((unsigned char)z[-1])) z--; if (z - payload >= 4 && !strncasecmp(z - 4, "</i>", 4)) italicAll = 1; }
     const char *fc = strcasestr(payload, "<font"); if (fc && fc - t < 2) { const char *c = strcasestr(fc, "color"); if (c) { c = strchr(c, '='); if (c) { c++; while (*c == '"' || *c == '\'' || *c == ' ') c++; if (*c == '#') c++; char hex[7]; int k = 0; while (isxdigit((unsigned char)c[k]) && k < 6) { hex[k] = c[k]; k++; } hex[k] = 0; if (k == 6) col = 0xff000000u | (uint32_t)strtoul(hex, NULL, 16); } } } }
-  for (size_t i = 0; i < n;) {
-    if (payload[i] == '\r') { i++; continue; }
-    if (payload[i] == '{' && payload[i + 1] == '\\') { const char *z = strchr(payload + i, '}'); if (z) { i = (size_t)(z - payload) + 1; continue; } }
-    if (payload[i] == '<') { const char *z = strchr(payload + i, '>'); if (z) { i = (size_t)(z - payload) + 1; continue; } }
-    body[o++] = payload[i++];
-  }
-  body[o] = 0;
+  for (size_t i = 0; i < n; i++) if (payload[i] != '\r') body[o++] = payload[i];
+  body[o] = 0; sub_strip_tags(body); /* (markup only: "a < b" keeps its words) */
   char *a = body; while (*a && isspace((unsigned char)*a)) a++; size_t l = strlen(a); while (l && isspace((unsigned char)a[l - 1])) a[--l] = 0;
   if (!*a) { free(body); return 0; }
   memset(out, 0, sizeof *out); out->s = s; out->e = e; out->t = strdup(a); free(body);
@@ -465,12 +462,27 @@ static void ts_add(TState *t, Line *ln, int pidx, long long skey, char *raw) {
   if (t->rawOn) { memmove(t->raw + a + 1, t->raw + a, (t->n - a) * sizeof *t->raw); memmove(t->rser + a + 1, t->rser + a, (t->n - a) * sizeof *t->rser); t->raw[a] = raw; t->rser[a] = ++t->nser; raw = NULL; }
   free(raw); t->n++;
 }
+/* S_TEXT/WEBVTT keeps a cue's name and its settings in the block's first two lines, its words after them */
+static int vtt_settings(const char *a, const char *e) {
+  static const char *const K[] = { "vertical:", "line:", "position:", "size:", "align:", "region:" };
+  while (a < e) { while (a < e && (*a == ' ' || *a == '\t' || *a == '\r')) a++; if (a >= e) break;
+    int ok = 0; for (unsigned i = 0; i < sizeof K / sizeof *K; i++) if (!strncmp(a, K[i], strlen(K[i]))) ok = 1; if (!ok) return 0;
+    while (a < e && *a != ' ' && *a != '\t' && *a != '\r') a++; }
+  return 1;
+}
+static const char *vtt_body(const char *p) {
+  const char *l1 = strchr(p, '\n'); if (!l1) return p; const char *l2 = strchr(l1 + 1, '\n'); if (!l2) return p;
+  return vtt_settings(l1 + 1, l2) && !strstr(p, "-->") ? l2 + 1 : p; /* (a file muxed with the words alone is shown whole) */
+}
+static int track_arabic(const Track *t) { const char *l = t->bcp[0] ? t->bcp : t->lang; return !strncasecmp(l, "ar", 2) || !strncasecmp(l, "fa", 2) || !strncasecmp(l, "per", 3) || !strncasecmp(l, "ur", 2); }
 static int make_line(MkvSession *s, TState *t, const Block *blk, double st, double cueDur, Line *out, char **raw) {
   double scale = s->info.tscale / 1e9; long n; unsigned char *data = decode_payload(t->tr, blk->payload, blk->plen, &n); *raw = NULL;
   if (!data) return 0;
+  if (!sub_utf8_ok(data, (size_t)n)) { /* a track muxed from an old file: its code page read as text (Arabic told by the track's language, else by the bytes) */
+    char *u = malloc((size_t)n * 3 + 1); if (u) { sub_bytes_utf8(data, (size_t)n, track_arabic(t->tr) ? 1 : -1, u); free(data); data = (unsigned char *)u; } }
   double dur = blk->dur >= 0 ? blk->dur * scale : (cueDur >= 0 ? cueDur : DEFAULT_DUR_S);
   double e = st + (dur > 0 ? dur : 0.5);
-  int ok = t->tr->kind == 2 ? ass_line((const char *)data, st, e, t->hdr, out) : text_line((const char *)data, st, e, out);
+  int ok = t->tr->kind == 2 ? ass_line((const char *)data, st, e, t->hdr, out) : text_line(!strcmp(t->tr->codec, "S_TEXT/WEBVTT") ? vtt_body((const char *)data) : (const char *)data, st, e, out);
   if (t->rawOn && t->tr->kind == 2) { /* the styled renderer takes the event as it is, signs without text too */
     if (!ok) { memset(out, 0, sizeof *out); out->s = st; out->e = e; out->t = strdup(""); out->x = out->y = -1; out->hidden = 1; ok = 1; }
     *raw = (char *)data; data = NULL; }
@@ -699,7 +711,7 @@ static int probe(MkvSession *s) {
   if (!i->haveTracks) return -2;
   int sub = 0;
   for (int k = 0; k < i->ntr; k++) { Track *t = &i->tr[k]; if (t->type != 17) continue; t->n = sub++;
-    const char *c = t->codec; t->kind = t->encrypted ? 0 : (!strcmp(c, "S_TEXT/UTF8") || !strcmp(c, "S_TEXT/ASCII") || !strcmp(c, "S_TEXT/WEBVTT")) ? 1 : (!strcmp(c, "S_TEXT/ASS") || !strcmp(c, "S_TEXT/SSA") || !strcmp(c, "S_ASS") || !strcmp(c, "S_SSA")) ? 2 : 0; }
+    const char *c = t->codec; t->kind = t->encrypted ? 0 : (!strcmp(c, "S_TEXT/UTF8") || !strcmp(c, "S_TEXT/ASCII") || !strcmp(c, "S_TEXT/WEBVTT") || !strncmp(c, "D_WEBVTT/", 9)) ? 1 : (!strcmp(c, "S_TEXT/ASS") || !strcmp(c, "S_TEXT/SSA") || !strcmp(c, "S_ASS") || !strcmp(c, "S_SSA")) ? 2 : 0; }
   return NR_OK;
 }
 static void read_chapters(MkvSession *s) {
@@ -864,6 +876,7 @@ char *mkv_track_header(MkvSession *s, int n) {
 }
 long long mkv_attachments_at(MkvSession *s) { if (!s) return -1; lock(s); long long p = s->listed ? s->info.attachPos : -1; unlock(s); return p; }
 int mkv_has_index(MkvSession *s) { if (!s) return -1; lock(s); int r = s->listed ? s->info.cuesPos >= 0 : -1; unlock(s); return r; }
+int mkv_title(MkvSession *s, char *out, int cap) { if (!s || cap <= 0) return 0; lock(s); out[0] = 0; if (s->listed) snprintf(out, cap, "%s", s->info.title); unlock(s); return out[0] != 0; }
 int mkv_listed(MkvSession *s) { if (!s) return 0; lock(s); int l = s->listed; unlock(s); return l; }
 /* ready: it has lines near the playhead, or everything there has been read (a quiet stretch has none to show) */
 int mkv_track_status(MkvSession *s, int n) {

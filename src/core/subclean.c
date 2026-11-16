@@ -1,6 +1,7 @@
 #include "core/subclean.h"
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 /* ---- one character at a time (UTF-8; a broken byte is kept as it is) ---- */
 static unsigned dec(const unsigned char *p, int *len) {
@@ -92,8 +93,12 @@ size_t sub_clean(char *s) {
 
 /* ---- sound descriptions: [coughs], (gunshots), ♪ MUSIC ♪ and speakers' names (JOHN:) go ----
    A bracket counts when it opens a word (at a line's start, after a space or a dash): "friend(s)" keeps its letters.
-   Brackets of every kind, full-width ones too; they must close within the line's next 300 bytes. */
+   Brackets of every kind, full-width ones too; they must close within the line's next 300 bytes.
+   Arabic subtitles write a name between brackets ("يا (ريك)"): what a bracket holds in Arabic letters is spoken
+   words and stays (the brackets alone go, in sub_clean), unless it reads as a description of a sound ((موسيقى),
+   [يضحك], (بالإسبانية)). */
 int sub_sdh_hide = 1;
+int sub_ads_hide = 1;
 static int open_br(const unsigned char *p, int *ol, const char **cl) {
   if (*p == '(') { *ol = 1; *cl = ")"; return 1; } if (*p == '[') { *ol = 1; *cl = "]"; return 1; } if (*p == '{') { *ol = 1; *cl = "}"; return 1; }
   if (p[0] == 0xef && p[1] == 0xbc && p[2] == 0x88) { *ol = 3; *cl = "\xef\xbc\x89"; return 1; } /* （ ） */
@@ -103,12 +108,30 @@ static int open_br(const unsigned char *p, int *ol, const char **cl) {
 }
 static int word_start(const char *s, const char *p) { if (p == s) return 1; unsigned char c = (unsigned char)p[-1]; return c == ' ' || c == '\n' || c == '\r' || c == '\t' || c == '-' || c == '"' || c == '\'' || c >= 0x80; }
 static int caps_only(const char *a, const char *b) { int up = 0; for (const char *p = a; p < b; p++) { unsigned char c = (unsigned char)*p; if (c >= 'a' && c <= 'z') return 0; if (c >= 'A' && c <= 'Z') up++; else if (c >= 0x80) return 0; } return up >= 2; }
+/* Arabic letters (U+0600..U+06FF, and the presentation forms old files are saved in) between a and b */
+static int has_arabic(const char *a, const char *b) {
+  for (const unsigned char *p = (const unsigned char *)a; p + 1 < (const unsigned char *)b; p++) {
+    if (p[0] >= 0xd8 && p[0] <= 0xdb && (p[1] & 0xc0) == 0x80) return 1;
+    if (p[0] == 0xef && p + 2 < (const unsigned char *)b && (p[1] == 0xad || p[1] == 0xae || p[1] == 0xaf || (p[1] >= 0xb0 && p[1] <= 0xbb))) return 1; }
+  return 0;
+}
+static int span_has(const char *a, const char *b, const char *w) { size_t n = strlen(w); for (const char *p = a; p + n <= b; p++) if (!memcmp(p, w, n)) return 1; return 0; }
+/* what Arabic captions call a sound, a manner of speaking or the language spoken */
+static int arabic_sound(const char *a, const char *b) {
+  static const char *const W[] = { "موسيق", "ضحك", "قهقه", "تنهد", "تنهّد", "صراخ", "يصرخ", "تصرخ", "صرخ", "صياح", "بكاء", "يبكي", "تبكي", "نحيب", "همس", "همهم", "طرق على", "طرقات", "رنين", "يرن", "يرنّ",
+    "صوت", "أصوات", "اصوات", "تصفيق", "صمت", "أنين", "لهاث", "يلهث", "تلهث", "سعال", "يسعل", "تسعل", "انفجار", "إطلاق نار", "اطلاق نار", "طلق ناري", "طلقات", "صفير", "صافرة", "صفارة", "غناء", "يغني", "تغني", "أغنية", "اغنية",
+    "نباح", "ضجيج", "ضوضاء", "شهيق", "زفير", "تأوه", "يتأوه", "هتاف", "تنحنح", "يتنحنح", "خطوات", "جرس", "صرير", "دوي", "شخير", "غير مسموع", "غير واضح", "غير مفهوم", "بالإنجليزية", "بالانجليزية", "بالإسبانية", "بالاسبانية",
+    "بالفرنسية", "بالألمانية", "بالالمانية", "بالإيطالية", "بالايطالية", "بالروسية", "بالصينية", "باليابانية", "بالكورية", "بالعربية", "بلغة", "يتحدث", "تتحدث", "يتكلم", "يتمتم", "تمتمة", "يلهثون", "يضحكون", "يصرخون", "تشويش", "هدير", "أزيز", "ازيز" };
+  for (unsigned i = 0; i < sizeof W / sizeof *W; i++) if (span_has(a, b, W[i])) return 1;
+  return 0;
+}
 size_t sub_strip_sdh(char *s) {
   char *o = s; const char *p = s;
   while (*p) {
     int ol; const char *cl;
     if (open_br((const unsigned char *)p, &ol, &cl) && word_start(s, p)) { /* (…) [ … ]: gone with what is inside */
-      const char *e = strstr(p + ol, cl); if (e && e - p <= 300) { p = e + strlen(cl); *o++ = ' '; continue; } }
+      const char *e = strstr(p + ol, cl);
+      if (e && e - p <= 300 && !(has_arabic(p + ol, e) && !arabic_sound(p + ol, e))) { p = e + strlen(cl); *o++ = ' '; continue; } }
     if (!strncmp(p, "\xe2\x99\xaa", 3)) { /* ♪ IN CAPITALS ♪: a description of the music, not its words */
       const char *e = strstr(p + 3, "\xe2\x99\xaa"); const char *nl = strchr(p + 3, '\n'); if (e && (!nl || e < nl) && caps_only(p + 3, e)) { p = e + 3; *o++ = ' '; continue; } }
     *o++ = *p++;
@@ -124,4 +147,111 @@ size_t sub_strip_sdh(char *s) {
     ls = *r == '\n'; if (*r) *w++ = *r++;
   }
   *w = 0; return (size_t)(w - s);
+}
+
+/* ---- markup: what a subtitle file writes for the player, not for the viewer ----
+   <i>, </font>, <c.yellow>, <00:01:02.000> (WebVTT), {\an8} and {\i1} (SubStation), {y:i} (MicroDVD) go; <br> is a
+   new line; &amp; and the like become their character; "\N" a new line. A "<" or a "{" that opens none of these is
+   a character of the line: nothing after it is lost ("5 < 6", "<<ريك>>", "{ريك}"). */
+static int tag_name(const char *p, size_t n) {
+  static const char *const T[] = { "i", "b", "u", "s", "em", "strong", "font", "c", "v", "ruby", "rt", "rp", "lang", "span", "br", "p", "div", "a", "small", "big", "sub", "sup", "center", "strike", "tt", "h1", "h2", "h3" };
+  for (unsigned i = 0; i < sizeof T / sizeof *T; i++) if (strlen(T[i]) == n && !strncasecmp(p, T[i], n)) return 1;
+  return 0;
+}
+/* the length of the tag at p ("<...>"), 0 when it is not one; *br: it breaks the line */
+static size_t tag_len(const char *p, int *br) {
+  *br = 0; const char *q = p + 1; if (*q == '/') q++;
+  const char *n0 = q; while ((*q >= 'a' && *q <= 'z') || (*q >= 'A' && *q <= 'Z') || (*q >= '0' && *q <= '9' && q > n0)) q++;
+  size_t nl = (size_t)(q - n0);
+  if (!nl) { /* <00:01:02.000>: a karaoke time */
+    const char *d = n0; int dig = 0; while ((*d >= '0' && *d <= '9') || *d == ':' || *d == '.') { dig += *d >= '0' && *d <= '9'; d++; }
+    return dig >= 4 && *d == '>' ? (size_t)(d - p) + 1 : 0; }
+  if (!tag_name(n0, nl)) return 0;
+  if (*q != '>' && *q != ' ' && *q != '.' && *q != '/' && *q != '\t') return 0;
+  const char *e = q; while (*e && *e != '>' && *e != '\n' && *e != '<' && e - p < 240) e++;
+  if (*e != '>') return 0;
+  *br = nl == 2 && !strncasecmp(n0, "br", 2); return (size_t)(e - p) + 1;
+}
+static size_t entity(const char *p, char *out, size_t *ol) {
+  static const struct { const char *e, *c; } E[] = { { "&amp;", "&" }, { "&lt;", "<" }, { "&gt;", ">" }, { "&quot;", "\"" }, { "&apos;", "'" }, { "&nbsp;", " " }, { "&lrm;", "" }, { "&rlm;", "" }, { "&zwnj;", "" }, { "&zwj;", "" }, { "&hellip;", "\xe2\x80\xa6" }, { "&ndash;", "-" }, { "&mdash;", "-" } };
+  for (unsigned i = 0; i < sizeof E / sizeof *E; i++) { size_t n = strlen(E[i].e); if (!strncasecmp(p, E[i].e, n)) { *ol = strlen(E[i].c); memcpy(out, E[i].c, *ol); return n; } }
+  if (p[1] == '#') { int hex = p[2] == 'x' || p[2] == 'X'; const char *d = p + 2 + hex; char *end; unsigned long v = strtoul(d, &end, hex ? 16 : 10);
+    if (end > d && *end == ';' && end - p <= 10 && v >= 32 && v < 0x110000 && !(v >= 0xd800 && v < 0xe000)) { if (v == 0xa0) { out[0] = ' '; *ol = 1; } else *ol = put(out, (unsigned)v); return (size_t)(end - p) + 1; } }
+  return 0;
+}
+size_t sub_strip_tags(char *s) {
+  if (!s) return 0; char *o = s; const char *p = s;
+  while (*p) {
+    if (*p == '<') { int br; size_t n = tag_len(p, &br); if (n) { if (br) { while (o > s && o[-1] == ' ') o--; *o++ = '\n'; } p += n; continue; } }
+    else if (*p == '{') { const char *e = strchr(p, '}');
+      if (e && e - p <= 400 && (p[1] == '\\' || (((p[1] >= 'a' && p[1] <= 'z') || (p[1] >= 'A' && p[1] <= 'Z')) && p[2] == ':') || (!strncasecmp(p + 1, "an", 2) && p[3] >= '1' && p[3] <= '9' && p[4] == '}'))) { p = e + 1; continue; } }
+    else if (*p == '&') { char c[4]; size_t ol = 0, n = entity(p, c, &ol); if (n) { memcpy(o, c, ol); o += ol; p += n; continue; } } /* (never longer than what it stood for) */
+    else if (*p == '\\' && (p[1] == 'N' || p[1] == 'n')) { while (o > s && o[-1] == ' ') o--; *o++ = '\n'; p += 2; continue; }
+    else if (*p == '\\' && p[1] == 'h') { *o++ = ' '; p += 2; continue; }
+    *o++ = *p++;
+  }
+  *o = 0; return (size_t)(o - s);
+}
+
+/* ---- adverts and credits: a line that sells a site or names who made the file, not a line of the film ---- */
+static int ci_has(const char *s, const char *w) { size_t n = strlen(w); for (; *s; s++) if (!strncasecmp(s, w, n)) return 1; return 0; }
+static int al_num(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'); }
+static int has_link(const char *s) {
+  if (ci_has(s, "www.") || ci_has(s, "http://") || ci_has(s, "https://") || ci_has(s, "t.me/")) return 1;
+  static const char *const TLD[] = { ".com", ".org", ".net", ".tv", ".io", ".to", ".cc", ".me", ".co", ".info", ".xyz", ".site", ".club", ".link", ".ws" };
+  for (const char *p = s; *p; p++) { if (*p != '.') continue;
+    for (unsigned i = 0; i < sizeof TLD / sizeof *TLD; i++) { size_t n = strlen(TLD[i]); if (strncasecmp(p, TLD[i], n) || al_num(p[n])) continue;
+      if ((i == 5 || i == 7) && p[n] && p[n] != '/' && p[n] != '\n') continue; /* ".to", ".me": a sentence whose full stop lost its space ("Wait.me too") is not a site */
+      int k = 0; const char *q = p; while (q > s && (al_num(q[-1]) || q[-1] == '-')) { q--; k++; }
+      if (k >= 4 && (q == s || q[-1] == ' ' || q[-1] == '\n' || q[-1] == '.' || q[-1] == ':' || q[-1] == '@' || q[-1] == '/' || (unsigned char)q[-1] >= 0x80)) return 1; } }
+  return 0;
+}
+int sub_is_ad(const char *t) {
+  if (!t || !*t) return 0;
+  if (has_link(t)) return 1;
+  static const char *const EN[] = { "opensubtitles", "open subtitles", "subtitles by", "subtitle by", "subtitled by", "subs by", "synced by", "sync by", "synced and corrected", "sync and correct", "sync & correct", "corrections by", "corrected by",
+    "encoded by", "ripped by", "downloaded from", "become vip member", "advertise your product", "addic7ed", "subscene", "translated by", "translation by", "captioning sponsored", "captions by", "captioned by", "caption by", "subtitling by",
+    "osdb", "podnapisi", "yify", "rate this subtitle", "watch movies online", "free download", "join our telegram", "telegram channel", "follow us on" };
+  for (unsigned i = 0; i < sizeof EN / sizeof *EN; i++) if (ci_has(t, EN[i])) return 1;
+  static const char *const AR[] = { "ترجمة:", "ترجمة :", "ترجمة وتعديل", "ترجمة و تعديل", "ترجمة وتدقيق", "ترجمة و تدقيق", "ترجمة وتنفيذ", "تمت الترجمة", "تمّت الترجمة", "تعديل التوقيت", "ضبط التوقيت", "توقيت:", "تدقيق:", "حقوق الترجمة", "الترجمة بواسطة",
+    "ترجمة بواسطة", "ترجمة فريق", "ترجمة الفريق", "فريق الترجمة", "تابعونا", "تابعنا على", "تابعوني", "قناة التلجرام", "قناة التيليجرام", "قناة التلغرام", "قناتنا على", "تيليجرام", "تلجرام", "تلغرام", "انستغرام", "إنستغرام", "انستقرام", "إنستقرام",
+    "حسابي على", "حسابنا على", "زوروا موقع", "زورو موقع", "تحميل من موقع", "مشاهدة ممتعة", "مشاهدة طيبة", "نتمنى لكم مشاهدة", "أتمنى لكم مشاهدة", "اتمنى لكم مشاهدة" };
+  for (unsigned i = 0; i < sizeof AR / sizeof *AR; i++) if (strstr(t, AR[i])) return 1;
+  for (const char *p = t; *p; p++) if (*p == '@' && (p == t || p[-1] == ' ' || p[-1] == '\n' || p[-1] == ':') && (al_num(p[1]) || p[1] == '_')) { int k = 1; while (al_num(p[k]) || p[k] == '_') k++; if (k >= 4) return 1; } /* @handle */
+  return 0;
+}
+
+/* ---- old code pages ----
+   A file saved by an old Windows program has one byte per letter. Western ones (Windows-1252) keep their accented
+   letters apart, each among plain ones ("café"); an Arabic one (Windows-1256) is whole words of high bytes. That
+   is how the two are told apart: most high bytes standing beside another one reads as Arabic. */
+int sub_utf8_ok(const unsigned char *b, size_t n) {
+  for (size_t i = 0; i < n;) { unsigned c = b[i]; int k = c < 0x80 ? 0 : (c & 0xe0) == 0xc0 ? 1 : (c & 0xf0) == 0xe0 ? 2 : (c & 0xf8) == 0xf0 ? 3 : -1;
+    if (k < 0 || (k == 1 && c < 0xc2) || i + (size_t)k >= n) return 0;
+    for (int j = 1; j <= k; j++) if ((b[i + j] & 0xc0) != 0x80) return 0;
+    i += (size_t)k + 1; }
+  return 1;
+}
+int sub_bytes_arabic(const unsigned char *b, size_t n) {
+  size_t hi = 0, beside = 0;
+  for (size_t i = 0; i < n; i++) { if (b[i] < 0xc0) continue; hi++; if ((i > 0 && b[i - 1] >= 0xc0) || (i + 1 < n && b[i + 1] >= 0xc0)) beside++; }
+  return hi >= 2 && beside * 4 >= hi * 3;
+}
+static const unsigned short CP1252_[32] = { 0x20ac, 0xfffd, 0x201a, 0x0192, 0x201e, 0x2026, 0x2020, 0x2021, 0x02c6, 0x2030, 0x0160, 0x2039, 0x0152, 0xfffd, 0x017d, 0xfffd,
+  0xfffd, 0x2018, 0x2019, 0x201c, 0x201d, 0x2022, 0x2013, 0x2014, 0x02dc, 0x2122, 0x0161, 0x203a, 0x0153, 0xfffd, 0x017e, 0x0178 };
+static const unsigned short CP1256_[128] = { 0x20ac, 0x067e, 0x201a, 0x0192, 0x201e, 0x2026, 0x2020, 0x2021, 0x02c6, 0x2030, 0x0679, 0x2039, 0x0152, 0x0686, 0x0698, 0x0688,
+  0x06af, 0x2018, 0x2019, 0x201c, 0x201d, 0x2022, 0x2013, 0x2014, 0x06a9, 0x2122, 0x0691, 0x203a, 0x0153, 0x200c, 0x200d, 0x06ba,
+  0x00a0, 0x060c, 0x00a2, 0x00a3, 0x00a4, 0x00a5, 0x00a6, 0x00a7, 0x00a8, 0x00a9, 0x06be, 0x00ab, 0x00ac, 0x00ad, 0x00ae, 0x00af,
+  0x00b0, 0x00b1, 0x00b2, 0x00b3, 0x00b4, 0x00b5, 0x00b6, 0x00b7, 0x00b8, 0x00b9, 0x061b, 0x00bb, 0x00bc, 0x00bd, 0x00be, 0x061f,
+  0x06c1, 0x0621, 0x0622, 0x0623, 0x0624, 0x0625, 0x0626, 0x0627, 0x0628, 0x0629, 0x062a, 0x062b, 0x062c, 0x062d, 0x062e, 0x062f,
+  0x0630, 0x0631, 0x0632, 0x0633, 0x0634, 0x0635, 0x0636, 0x00d7, 0x0637, 0x0638, 0x0639, 0x063a, 0x0640, 0x0641, 0x0642, 0x0643,
+  0x00e0, 0x0644, 0x00e2, 0x0645, 0x0646, 0x0647, 0x0648, 0x00e7, 0x00e8, 0x00e9, 0x00ea, 0x00eb, 0x0649, 0x064a, 0x00ee, 0x00ef,
+  0x064b, 0x064c, 0x064d, 0x064e, 0x00f4, 0x064f, 0x0650, 0x00f7, 0x0651, 0x00f9, 0x0652, 0x00fb, 0x00fc, 0x200e, 0x200f, 0x06d2 };
+size_t sub_bytes_utf8(const unsigned char *b, size_t n, int arabic, char *out) {
+  if (arabic < 0) arabic = sub_bytes_arabic(b, n);
+  size_t o = 0;
+  for (size_t i = 0; i < n; i++) { unsigned c = b[i]; if (!c) continue;
+    if (c >= 0x80) c = arabic ? CP1256_[c - 0x80] : c < 0xa0 ? CP1252_[c - 0x80] : c;
+    o += put(out + o, c); }
+  out[o] = 0; return o;
 }

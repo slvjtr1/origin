@@ -30,11 +30,11 @@
 #define CLIP_Y 280.0f
 #define LIST_PAD 14.0f /* the list starts this far under its clip: a held row's line runs outside the row, and the first one's top was cut */
 #define DS_MAX 6           /* a row's words: at most this many lines, then an ellipsis */
-enum { R_PLAIN, R_RESUME, R_BEST };
+enum { R_PLAIN, R_RESUME, R_BEST, R_HIDDEN }; /* R_HIDDEN: the last row, "N sources left out. Show them" */
 typedef struct { char name[96]; Stream *items; int n; int resume; } Group;
 static struct {
   int open, zone; /* 0 list, 1 chips */ Tween x, op; /* the panel's slide and fade: an even ease-out (the quick-tween curve put it all in the first two frames) */ Tween out; int closing; SGlass glass;
-  Group groups[MAXG]; int ng; unsigned tok; int loading; double t; char key[160];
+  Group groups[MAXG]; int ng; unsigned tok, reqTok; int loading, raw; double t; char key[160]; Stream hiddenRow;
   char type[16], id[64], vid[80], title[256], ep[400];
   int filter, chipIdx; int chips[MAXG + 1]; int nchips; QT chipsX;
   const Stream *items[MAXITEMS]; int itemGroup[MAXITEMS], kind[MAXITEMS]; int n, idx; QT listY; Nudge nudge; FPill pill;
@@ -66,12 +66,16 @@ static void rebuild(void) {
     for (int i = 0; i < S.groups[g].n && n < MAXITEMS - 1; i++) { const Stream *s = &S.groups[g].items[i]; S.items[n] = s; S.itemGroup[n] = g; S.kind[n] = S.groups[g].resume ? R_RESUME : R_PLAIN;
       nw[n] = was_seen(s) ? 0 : now; n++; } } /* rows new to the list fade in (never pop) */
   /* the pick for this TV right after the resume row (best stream on, or Best match for this TV) */
-  if (best_row_on() && S.filter < 0 && n) { best_prepare(S.type, S.vid[0] ? S.vid : S.id); const Stream *list[MAXITEMS]; int m = 0; for (int i = 0; i < n; i++) if (S.kind[i] == R_PLAIN) list[m++] = S.items[i];
+  if (best_row_on() && S.filter < 0 && n) { /* (before the left-out row is added: n counts streams only) */ best_prepare(S.type, S.vid[0] ? S.vid : S.id); const Stream *list[MAXITEMS]; int m = 0; for (int i = 0; i < n; i++) if (S.kind[i] == R_PLAIN) list[m++] = S.items[i];
     BestRate r; const Stream *b = m ? best_pick(list, m, best_dur(sb_meta_cached(S.type, S.id), S.type), NULL, -1, &r) : NULL;
     if (b) { int at = S.kind[0] == R_RESUME ? 1 : 0; memmove(S.items + at + 1, S.items + at, (n - at) * sizeof *S.items); memmove(S.itemGroup + at + 1, S.itemGroup + at, (n - at) * sizeof *S.itemGroup);
       memmove(S.kind + at + 1, S.kind + at, (n - at) * sizeof *S.kind); memmove(nw + at + 1, nw + at, (n - at) * sizeof *nw);
       S.items[at] = b; S.itemGroup[at] = -1; S.kind[at] = R_BEST; nw[at] = S.bestShown || was_seen(b) ? 0 : now; S.bestShown = 1; n++;
       snprintf(S.bestSum, sizeof S.bestSum, "%s", r.sum); } }
+  /* what Clean sources left out: said in a last row, which asks again for everything */
+  { int hid = S.raw ? 0 : sb_streams_hidden(S.reqTok); if (hid > 0 && S.filter < 0 && !S.loading && n < MAXITEMS - 1) { char k[12]; snprintf(k, sizeof k, "%d", hid);
+      memset(&S.hiddenRow, 0, sizeof S.hiddenRow); snprintf(S.hiddenRow.name, sizeof S.hiddenRow.name, "%s", T1("{n} source(s) left out by Clean sources. Show them", "n", k));
+      S.items[n] = &S.hiddenRow; S.itemGroup[n] = -1; S.kind[n] = R_HIDDEN; nw[n] = was_seen(&S.hiddenRow) ? 0 : now; n++; } }
   for (int i = 0; i < n; i++) { if (nw[i] == 0) { /* kept rows keep their fade */ int k = -1; for (int j = 0; j < S.n; j++) if (S.items[j] == S.items[i] && S.kind[j] == S.kind[i]) { k = j; break; } S.nwAt[i] = k >= 0 ? S.nwAt[k] : 0; } else S.nwAt[i] = nw[i]; }
   S.n = n; S.nseen = 0; for (int i = 0; i < n && S.nseen < MAXITEMS; i++) S.seen[S.nseen++] = S.items[i];
   int k = -1; if (sel) for (int i = 0; i < S.n; i++) if (S.items[i] == sel && S.kind[i] == selKind) k = i;
@@ -92,6 +96,7 @@ static Screen sheet = { NULL, NULL, key, tick, draw, NULL, NULL, NULL };
 static float sheet_x(void) { return app_rtl() ? 0 : SB_W - SW; }
 static char emptyNote[200]; /* said instead of "No streams found." (an episode that has not aired) */
 void streams_empty_note(const char *t) { snprintf(emptyNote, sizeof emptyNote, "%s", t ? t : ""); }
+static int rawWant; /* the next list: everything the addons have (asked from the left-out row) */
 void streams_show(const char *type, const char *id, const char *vid, const char *title, const char *epLabel) {
   emptyNote[0] = 0;
   char k[160]; snprintf(k, sizeof k, "%s|%s", type, vid);
@@ -103,19 +108,22 @@ void streams_show(const char *type, const char *id, const char *vid, const char 
   snprintf(S.title, sizeof S.title, "%s", title ? title : ""); snprintf(S.ep, sizeof S.ep, "%s", epLabel ? epLabel : "");
   /* minimised and reopened: keep the results (and the focus) instead of asking every addon again */
   if (!strcmp(k, S.key) && (S.loading || S.ng) && app_now() - S.t < 600) { render_chips(); rebuild(); return; }
+  S.raw = rawWant; rawWant = 0; if (S.raw) sb_streams_raw_next();
   snprintf(S.key, sizeof S.key, "%s", k); S.t = app_now(); S.n = 0; S.idx = 0; S.nseen = 0; S.bestShown = 0; groups_clear(); snprintf(S.type, sizeof S.type, "%s", type); snprintf(S.id, sizeof S.id, "%s", id); snprintf(S.vid, sizeof S.vid, "%s", vid);
   S.filter = -1; S.chipIdx = 0; S.nchips = 0; S.tok++; S.loading = 1; qt_set(&S.chipsX, 0); qt_set(&S.listY, 0);
   Stream r; if (sb_resume_stream(id, vid, &r)) { Stream x = r; /* (it keeps its addon: played again, it is remembered as that addon's, not as "Last used") */ snprintf(x.name, sizeof x.name, "%s", T("Resume last stream")); S.resumeSum[0] = 0; { BestRate br; memset(&br, 0, sizeof br); best_rate(&r, NULL, -1, 100, &br); snprintf(S.resumeSum, sizeof S.resumeSum, "%s", br.sum); } /* its specs laid out as the best fit's are */
     add(&x, 1, 0, T("Last used"), 1); }
   else rebuild();
-  sb_streams(type, vid, on_part, on_done, (void *)(uintptr_t)S.tok);
+  S.reqTok = sb_streams(type, vid, on_part, on_done, (void *)(uintptr_t)S.tok);
 }
 void streams_close(int instant) {
   if (!S.open && !instant) return; S.open = 0; if (app_overlay == &sheet) app_overlay = NULL; S.info = 0; S.holding = 0; tween_set(&S.infoK, 0);
   if (instant) { S.closing = 0; tween_set(&S.op, 0); return; }
   S.closing = 1; app_occluder_drop(); tween_set(&S.out, S.op.v); tween_to(&S.out, 0, 0.18f, EASE_IN_OUT); tween_to(&S.x, 32, 0.2f, EASE_CSS_EASEOUT);
 }
-static void play(int i) { const Stream *s = S.items[i]; fpill_press(&S.pill); app_play(s, S.type, S.id, S.vid, 0); }
+static void show_all(void) { char ty[16], id[64], vid[80], ti[256], ep[400]; snprintf(ty, sizeof ty, "%s", S.type); snprintf(id, sizeof id, "%s", S.id); snprintf(vid, sizeof vid, "%s", S.vid); snprintf(ti, sizeof ti, "%s", S.title); snprintf(ep, sizeof ep, "%s", S.ep);
+  S.key[0] = 0; rawWant = 1; sound_play(SND_TOGGLE); streams_show(ty, id, vid, ti, ep); }
+static void play(int i) { if (S.kind[i] == R_HIDDEN) { show_all(); return; } const Stream *s = S.items[i]; fpill_press(&S.pill); app_play(s, S.type, S.id, S.vid, 0); }
 /* the best pick's details: the row grows into a panel that hugs the stream's own words (every line as the addon wrote
    it, wrapped, nothing cut), on the sheets' glass; a long one scrolls with Up/Down */
 #define INFO_PAD 36.0f
@@ -169,7 +177,7 @@ static int key(int k) {
   if (k == K_DOWN) { if (S.idx < S.n - 1) S.idx++; else nudge_start(&S.nudge, k); }
   else if (k == K_UP) { if (S.idx > 0) S.idx--; else if (S.nchips > 1) S.zone = 1; else if (is_ep_list()) { S.zone = 2; sound_focus(); } else nudge_start(&S.nudge, k); }
   else if (k == K_RIGHT) nudge_start(&S.nudge, k);
-  else if (k == K_OK) { if (S.idx < S.n && S.kind[S.idx] != R_PLAIN) { S.holding = 1; S.swelled = 0; S.holdAt = app_now(); } /* a tap plays it, held: its details */
+  else if (k == K_OK) { if (S.idx < S.n && S.kind[S.idx] == R_HIDDEN) show_all(); else if (S.idx < S.n && S.kind[S.idx] != R_PLAIN) { S.holding = 1; S.swelled = 0; S.holdAt = app_now(); } /* a tap plays it, held: its details */
     else if (S.idx < S.n) play(S.idx); }
   else if (k == K_LEFT || k == K_BACK) streams_close(0);
   return 1;
@@ -235,7 +243,7 @@ static void tick(float dt) {
   tween_tick(&S.phA, dt); tween_tick(&S.msgA, dt); tween_tick(&S.spA, dt); tween_tick(&S.infoK, dt); qt_tick(&S.infoY, dt); sglass_tick(&S.pglass, dt);
   { int rk = S.zone * 1000 + S.idx + (S.idx < S.n ? S.kind[S.idx] * 100000 : 0); if (rk != S.restKey) { S.restKey = rk; S.restAt = app_now(); } }
   if (S.holding) {
-    if (S.zone != 0 || S.idx >= S.n || S.kind[S.idx] == R_PLAIN || !S.open) S.holding = 0;
+    if (S.zone != 0 || S.idx >= S.n || S.kind[S.idx] == R_PLAIN || S.kind[S.idx] == R_HIDDEN || !S.open) S.holding = 0;
     else if (app_hold_k(S.holdAt) >= 1) { S.holding = 0; info_open(); }
     else if (!app_ok_down()) { S.holding = 0; play(S.idx); }
     else if (app_hold_k(S.holdAt) > 0 && !S.swelled) { S.swelled = 1; sound_play(SND_HOLD); } }
@@ -362,11 +370,11 @@ static void draw(void) {
     hit_add(x0, iy, LW, ih, item_focus, item_act, i, 0);
     const char *nm = S.nm[i]; const char *ds = row_desc(i); int ico = S.kind[i] != R_PLAIN;
     float tx = rtl ? lx - 24 + nx : x0 + 24 + nx, ty = iy + 18 + ny; uint32_t nc = f ? ACC_FG : ACC3;
-    if (ico) { icon_draw("play", rtl ? tx - ICO : tx, ty + (NM_LH - ICO) / 2 + 1, ICO, nc); tx += rtl ? -(ICO + 10) : ICO + 10; }
+    if (ico) { icon_draw(S.kind[i] == R_HIDDEN ? "eye" : "play", rtl ? tx - ICO : tx, ty + (NM_LH - ICO) / 2 + 1, ICO, nc); tx += rtl ? -(ICO + 10) : ICO + 10; }
     int nl = text_draw_wrapped(nm, tx, ty + (NM_LH - text_line_height(NM_PX)) / 2, LW - 48 - (ico ? ICO + 10 : 0), 2, NM_PX, 600, nc, 0.2f, al, NM_LH); ty += nl * NM_LH + 8;
     if (S.ntag[i]) { tags_draw(i, rtl ? lx - 24 + nx : x0 + 24 + nx, ty, LW - 48, rtl, f); ty += TAG_H + 10; }
     if (ds[0]) text_draw_wrapped(ds, rtl ? lx - 24 + nx : x0 + 24 + nx, ty + (DS_LH - text_line_height(DS_PX)) / 2, LW - 48, DS_MAX, DS_PX, 400, f ? ACC_FG : WHITE_A(204), 0, al, DS_LH);
-    if (S.kind[i] != R_PLAIN && f) { float ha = (float)((now - S.restAt - 3) / 0.4); ha = ha < 0 ? 0 : ha > 1 ? 1 : ha; /* resting on it 3 s: how to see all of it, faint */
+    if (S.kind[i] != R_PLAIN && S.kind[i] != R_HIDDEN && f) { float ha = (float)((now - S.restAt - 3) / 0.4); ha = ha < 0 ? 0 : ha > 1 ? 1 : ha; /* resting on it 3 s: how to see all of it, faint */
       if (S.holding || S.info) ha = 0;
       if (ha > 0) key_hint(rtl ? x0 + 24 + nx : x0 + LW - 24 + nx, iy + 18 + ny + NM_LH / 2, K_OK, T("Hold for details"), col_alpha(ACC_FG, 0.8f * ha), !rtl); /* the remote's OK, then what holding it does */
       float hk = S.holding ? app_hold_k(S.holdAt) : 0; if (hk > 0) hold_trace_draw(x0 + nx, iy + ny, LW, ih, 18, ease_apply(EASE_IN_OUT, hk)); }

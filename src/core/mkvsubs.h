@@ -19,6 +19,7 @@ MkvSession *mkv_open(const char *url, double startPos, int p2p);
 void mkv_close(MkvSession *s);                       /* the thread stops and frees itself */
 int  mkv_state(MkvSession *s);
 const char *mkv_error(MkvSession *s);
+int  mkv_title(MkvSession *s, char *out, int cap);    /* the name the file gives itself (its Segment's Title; often the release's name), once listed */
 int  mkv_listed(MkvSession *s);                      /* 1 once the file's tracks are read (they can be listed and chosen) */
 int  mkv_tracks(MkvSession *s, MkvTrack *out, int max);
 int  mkv_audio_tracks(MkvSession *s, MkvAudio *out, int max);  /* once listed: codec (A_DTS, A_AC3...), language, channels */

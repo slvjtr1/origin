@@ -11,4 +11,14 @@ size_t sub_clean(char *s);   /* returns the new length */
 /* sound descriptions out ([coughs], (gunshots), ♪ MUSIC ♪, JOHN:), before sub_clean; on while sub_sdh_hide (Settings) */
 extern int sub_sdh_hide;
 size_t sub_strip_sdh(char *s);
+/* the file's markup out (<i>, {\an8}, &amp;, "\N"), before the two above: only what is markup, never the words beside it */
+size_t sub_strip_tags(char *s);
+/* a line that advertises a site or credits the file's makers (asked of the line as the file has it); left out while sub_ads_hide */
+extern int sub_ads_hide;
+int sub_is_ad(const char *line);
+/* text that is not UTF-8 (old files, and tracks muxed from them): Windows-1256 when it reads as Arabic (arabic 1: it is
+   known to be, -1: told by the bytes), else Windows-1252. out holds up to n * 3 + 1 bytes; zero bytes are skipped */
+int sub_utf8_ok(const unsigned char *b, size_t n);
+int sub_bytes_arabic(const unsigned char *b, size_t n);
+size_t sub_bytes_utf8(const unsigned char *b, size_t n, int arabic, char *out);
 #endif

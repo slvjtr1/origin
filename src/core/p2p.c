@@ -71,7 +71,7 @@ static const char *loc_name(int l) { return l == LOC_FLASH ? "flash" : l == LOC_
 static int relocating; static volatile int relocReady; static Prof relocTo; static double relocAt, relocLook; static unsigned relocSerial;
 
 /* the one torrent being resolved / played */
-static struct { int on; char ih[41], magnet[4096]; int want, se, ep; uint32_t idx; uint64_t size; double t0; P2pCb cb; void *ud; char status[256]; int stage; } R;
+static struct { int on; char ih[41], magnet[4096]; int want, se, ep, ab; uint32_t idx; uint64_t size; double t0; P2pCb cb; void *ud; char status[256]; int stage; } R;
 /* the active one, for stats, pacing and the reason line */
 static struct { char ih[41]; uint64_t size, lastBytes; double lastT, rate, dur, bps; int calm, gentle, playedOnce; double startT0, stallT0, lastWatch, lastReason, reasonLogT, lastReport; int reasonKind; char reason[200]; } A;
 
@@ -317,7 +317,7 @@ void p2p_resolve(const char *url, P2pCb cb, void *ud) {
   p += 40; R.want = -1; if (*p == '/') { p++; if (isdigit((unsigned char)*p)) R.want = atoi(p); }
   int m = snprintf(R.magnet, sizeof R.magnet, "magnet:?xt=urn:btih:%s", R.ih);
   const char *q = strchr(url, '?');
-  { const char *e = q ? strstr(q, "?se=") : NULL; if (!e && q) e = strstr(q, "&se="); if (e && sscanf(e + 4, "%d.%d", &R.se, &R.ep) != 2) R.se = R.ep = 0; } /* the episode opened (Clean sources) */
+  { const char *e = q ? strstr(q, "?se=") : NULL; if (!e && q) e = strstr(q, "&se="); R.ab = 0; if (e && sscanf(e + 4, "%d.%d.%d", &R.se, &R.ep, &R.ab) < 2) R.se = R.ep = R.ab = 0; } /* the episode opened (Clean sources) */
   while (q && (q = strstr(q, "tr=")) && m < (int)sizeof R.magnet - 600) { /* the addon's own trackers first (already encoded) */
     q += 3; const char *e = strchr(q, '&'); int l = e ? (int)(e - q) : (int)strlen(q);
     char dec[512]; int k = 0; for (int i = 0; i < l && k < 511; i++) { if (q[i] == '%' && i + 2 < l) { dec[k++] = (char)(hexval(q[i + 1]) * 16 + hexval(q[i + 2])); i += 2; } else dec[k++] = q[i]; } dec[k] = 0;
@@ -345,14 +345,14 @@ static int pick_file(const sbe_file *f, int n, int want) {
   if (R.se > 0 && nv > 1) {
     int exact = -1, ne = 0, loose = -1, nl = 0; uint64_t es = 0;
     for (int i = 0; i < n; i++) { if (!is_video(f[i].path) || f[i].size < (8u << 20)) continue;
-      int v = src_episode_verdict(f[i].path, R.se, R.ep);
+      int v = src_episode_verdict_abs(f[i].path, R.se, R.ep, R.ab, NULL);
       if (v > 0) { ne++; if (f[i].size > es) { es = f[i].size; exact = i; } } /* (two cuts of it: the larger) */
-      else if (!v && src_episode_loose(f[i].path, R.se, R.ep)) { nl++; loose = i; } }
-    int wv = want >= 0 && want < n && is_video(f[want].path) ? src_episode_verdict(f[want].path, R.se, R.ep) : -2;
+      else if (!v && src_episode_loose_abs(f[i].path, R.se, R.ep, R.ab)) { nl++; loose = i; } }
+    int wv = want >= 0 && want < n && is_video(f[want].path) ? src_episode_verdict_abs(f[want].path, R.se, R.ep, R.ab, NULL) : -2;
     if (wv == 1 || (wv == 0 && !ne)) return want; /* the addon's file, and nothing says it is another episode */
     if (ne) return exact;
     if (nl == 1) return loose;
-    if (want < 0 && !nl && src_episode_verdict(f[big].path, R.se, R.ep) >= 0) return big; /* nothing is numbered: the largest, as before */
+    if (want < 0 && !nl && src_episode_verdict_abs(f[big].path, R.se, R.ep, R.ab, NULL) >= 0) return big; /* nothing is numbered: the largest, as before */
     return -1; /* a pack of other episodes: never one of them in its place */
   }
   if (want >= 0 && want < n && is_video(f[want].path)) return want;

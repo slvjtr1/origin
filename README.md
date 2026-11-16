@@ -31,7 +31,8 @@
 |---|---|
 | **The best stream, in one press** | Play picks the source that suits your TV and your connection: resolution, HDR, sound, size and health are read from every source. It is chosen as soon as a good one is there. |
 | **A source fails, the next one plays** | When a source does not play, the next best one starts by itself, then a third. If all three fail, the page says so and lets you choose from them. |
-| **Clean sources** | Programs, archives and fake files are left out. For a series, sources of another episode or season are left out, and a torrent pack plays the episode you opened. |
+| **Super clean sources** | Programs, archives and fake files are left out. So are sources of another episode or season, of another title with a similar name (a spin-off, a sequel, a film of another year) and cinema recordings; a torrent pack plays the episode you opened. The list says how many were left out and shows them if you ask. |
+| **The wrong video never comes back** | A source that plays something else than what you opened is noticed by the player (the file's own title, its length), skipped, and kept out of the lists from then on. You can mark one yourself from the sources list. |
 | **Torrents built in** | Played straight from the swarm with a buffer sized to your TV's memory, or kept on a USB drive on LG webOS. |
 | **Skip intro, recap and credits** | A button at the right moment. Press OK, or let it skip by itself. |
 | **Next episode** | Starts by itself, from the same source group when there is one. |
@@ -55,7 +56,7 @@
 | **Picked for you** | From your addons, OpenSubtitles and the file itself, in your language. |
 | **OpenSubtitles Pro, built in** | More subtitles and none of the spam: with AI translations, made by people only, or off. The standard service answers when it is away. |
 | **In sync** | Checked against other releases and brought into step by themselves; one press to adjust. |
-| **Your way** | Size, six fonts, bold, colours, outline, shadow, background and height. Styled ASS and SSA subtitles drawn as the film intends. Sound descriptions hidden. Arabic joined and right to left. |
+| **Your way** | Size, six fonts, bold, colours, outline, shadow, background and height. Styled ASS and SSA subtitles drawn as the film intends. Sound descriptions, adverts and credits hidden; names between brackets kept. Old Arabic encodings read as Arabic. Arabic joined and right to left. |
 
 ### Finding things
 | | |

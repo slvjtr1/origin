@@ -387,6 +387,7 @@ static void adopt(void) {
   render();
 }
 static void on_meta(cJSON *m, void *ud) {
+  if (m && (unsigned)(uintptr_t)ud == D.gen) sb_src_know(D.p.it.type, ID()); /* Super clean: ready before the streams are asked */
   if ((unsigned)(uintptr_t)ud != D.gen || SCR != SCR_DETAIL) return;
   if (!m) { if (!D.meta) toast(T("Could not load title"), 2000, NULL); return; }
   if (m == D.src && (D.meta || D.pend)) return; /* the copy on the page is this one */

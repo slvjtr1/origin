@@ -1,25 +1,25 @@
 {
-  "version": "1.1.0",
+  "version": "1.2.0",
   "items": [
     {
-      "icon": "play",
-      "title": "A new player bar",
-      "text": "Three groups of icons: the picture on the left (upscale, picture size), the film in the middle (back, play, forward, with your seek step written on them), sound and subtitles on the right."
+      "icon": "p_src",
+      "title": "Super clean sources",
+      "text": "Sources that are really another title (a spin-off, a sequel, a film of another year), another episode or a cinema recording are left out before you see them. The last row of the list says how many, and shows them if you ask."
+    },
+    {
+      "icon": "eyeOff",
+      "title": "The wrong video never comes back",
+      "text": "When a source plays something else than what you opened, the player notices by itself and moves to the next one. You can also say so from the sources list: that source stays out for good."
+    },
+    {
+      "icon": "wn_subs",
+      "title": "Names stay in the subtitles",
+      "text": "A name written between brackets or quotes is no longer lost with the marks around it. Lines that advertise a site or credit the translators are hidden."
     },
     {
       "icon": "p_subs",
-      "title": "OpenSubtitles Pro, built in",
-      "text": "More subtitles and none of the spam. Choose in Settings: with AI translations, made by people only, or off."
-    },
-    {
-      "icon": "p_asp",
-      "title": "Brightness and See in the dark, stronger",
-      "text": "Dark scenes are opened up properly now, and both work on Google TV too, with Clear voice and Even volume."
-    },
-    {
-      "icon": "g_speed",
-      "title": "Reduce for old TVs",
-      "text": "Google TV: a lighter app for slow devices. On by itself where memory is short, or a switch in Settings, Appearance."
+      "title": "Old Arabic subtitles read right",
+      "text": "Subtitle files and built-in tracks saved in the old Arabic encoding now show as Arabic, not as symbols."
     }
   ],
   "support": {

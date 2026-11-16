@@ -6,6 +6,7 @@
 #include "core/store.h"
 #include "core/i18n.h"
 #include "core/usb.h"
+#include "core/memctl.h"
 #include <SDL2/SDL.h>
 #include <dlfcn.h>
 #include <errno.h>
@@ -76,7 +77,7 @@ static struct { int on; char ih[41], magnet[4096]; int want, se, ep, ab; uint32_
 static struct { char ih[41]; uint64_t size, lastBytes; double lastT, rate, dur, bps; int calm, gentle, playedOnce; double startT0, stallT0, lastWatch, lastReason, reasonLogT, lastReport; int reasonKind; char reason[200]; } A;
 
 static double now_s(void) { return SDL_GetTicks() / 1000.0; }
-static double idle_limit(void) { const char *e = getenv("SB_P2PIDLE"); return e ? atof(e) : 300; } /* SB_P2PIDLE=5: development, stop cycles */
+static double idle_limit(void) { const char *e = getenv("SB_P2PIDLE"); return e ? atof(e) : 90; } /* (long enough for the next episode to find it warm; then its memory goes back to the TV) */ /* SB_P2PIDLE=5: development, stop cycles */
 static void lib_path(char *p, size_t cap) { char *base = SDL_GetBasePath();
 #ifdef __APPLE__
   snprintf(p, cap, "%slibsbengine.dylib", base ? base : "");
@@ -145,7 +146,10 @@ static int usable_dir(const char *dir) {
    room for the video pipeline and the engine's own memory */
 static long keep_override(void) { const char *e = getenv("SB_P2P_KEEPMB"); return e ? atol(e) : -1; } /* development: the MB kept free, for tests on small disk images */
 static long ram_reserve(const Prof *P) { if (keep_override() >= 0) return keep_override();
-  long r = P->memTotal * 12 / 100; if (r < 64) r = 64; if (r > 160) r = 160; return r + (P->tier == 0 ? 24 : 32); }
+  /* 12 % of the TV's memory stays free beside the window: the TV ends the app in front when it runs short itself
+     (a system keyboard, a second app waking). Bigger TVs keep more: their own low mark is higher */
+  long top = P->tier == 0 ? 160 : P->tier == 1 ? 208 : 256;
+  long r = P->memTotal * 12 / 100; if (r < 64) r = 64; if (r > top) r = top; return r + (P->tier == 0 ? 24 : 32); }
 static long flash_reserve(void) { if (keep_override() >= 0) return keep_override();
   long cap = cache_cap_bytes() / (long)MB, kept = cache_kept_bytes(); kept = kept < 0 ? cap / 2 : kept / (long)MB;
   return 24 + (cap > kept ? cap - kept : 0);
@@ -169,7 +173,7 @@ static void choose_profile(Prof *P) {
   P->memFree = plat_mem_free_mb(); if (P->memFree < 0) P->memFree = P->memTotal / 4;
   long nc = sysconf(_SC_NPROCESSORS_ONLN); P->cpus = nc > 0 ? (int)nc : 1;
   P->tier = P->memTotal < 1024 || P->memFree < 160 ? 0 : P->memTotal < 2048 || P->memFree < 400 ? 1 : 2;
-  P->wmax = P->tier == 0 ? 256 : P->tier == 1 ? 384 : 512;
+  P->wmax = P->tier == 0 ? 256 : P->tier == 1 ? 384 : P->memFree >= 1024 ? 768 : 512; /* (a large TV with a gigabyte free: room for a remux's 40 s) */
   /* a USB drive switched on for it comes first: 70 % of its free room, the whole film up to 8 GB */
   UsbDrive d; char ur[1024];
   if (usb_cache_on(&d)) { usb_root(ur, sizeof ur, d.mnt); mkdir(ur, 0755); struct stat st;
@@ -468,7 +472,7 @@ void p2p_pump(void) {
     if (t - A.lastT >= 1.0) { sbe_stats st; if (!E->stats(&st)) { if (A.lastT > 0 && st.downloaded >= A.lastBytes) { double r = (double)(st.downloaded - A.lastBytes) / (t - A.lastT); A.rate = A.rate * 0.6 + r * 0.4; } A.lastBytes = st.downloaded; } A.lastT = t; }
     if (A.ih[0]) watch_room(t); }
   watch_usb(t);
-  if (!R.on) { if (E && es == ENG_ON && !A.ih[0] && idleSince > 0 && t - idleSince > idle_limit()) { ENG_SET(ENG_STOPPING); pthread_t th; if (!pthread_create(&th, NULL, engine_stop, NULL)) pthread_detach(th); else ENG_SET(ENG_ON); idleSince = 0; fprintf(stderr, "[p2p] engine stopped after %.0f idle seconds\n", idle_limit()); } return; }
+  if (!R.on) { if (E && es == ENG_ON && !A.ih[0] && idleSince > 0 && t - idleSince > idle_limit()) { ENG_SET(ENG_STOPPING); pthread_t th; if (!pthread_create(&th, NULL, engine_stop, NULL)) pthread_detach(th); else ENG_SET(ENG_ON); idleSince = 0; mem_trim_soon(5, "the torrent engine stopped"); fprintf(stderr, "[p2p] engine stopped after %.0f idle seconds\n", idle_limit()); } return; }
   if (es == ENG_OFF) { if (ensure_engine()) { fail(T("Couldn’t start the torrent engine")); return; } }
   if (es == ENG_FAILED) { fprintf(stderr, "[p2p] engine failed: %s\n", engErr); ENG_SET(ENG_OFF); fail(T("Couldn’t start the torrent engine")); return; }
   if (es != ENG_ON) { snprintf(R.status, sizeof R.status, "%s", p2p_wait_reason(1)); return; }

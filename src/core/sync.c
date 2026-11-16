@@ -18,6 +18,7 @@ static int SDLCALL on_event(void *ud, SDL_Event *e) {
 }
 /* a pull that changed the library: applied in a pause of the remote (a rebuild in the middle of a move is a
    hitch), at most 5 s later */
+int sync_away(void) { return away; }
 static void on_lib(int changed, void *ud) { (void)ud; if (!changed) return; board_invalidate(); if (!rebuildWanted) { rebuildWanted = 1; rebuildSince = app_now(); } }
 static void on_addons(int changed, void *ud) {
   (void)ud; if (!changed) return;

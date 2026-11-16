@@ -1,6 +1,6 @@
 /* Torrents, inside the app: the engine library is loaded and started the first time a torrent is
    played, keeps a small window of the film where the TV has room (flash, else RAM), serves the file on 127.0.0.1 for the player, and stops
-   five minutes after the last film. Everything is called from the main thread. */
+   a minute and a half after the last film. Everything is called from the main thread. */
 #ifndef SB_P2P_H
 #define SB_P2P_H
 #include <stdint.h>
@@ -12,7 +12,7 @@ const char *p2p_status(void);                   /* the line for the player's art
 const char *p2p_wait_reason(int waiting);       /* while the player waits (1): "" until it is slow (~7 s at the start, 3 s mid-film), then one short reason; 0 resets */
 int  p2p_peer_line(char *out, int cap);         /* "12 peers · 2.4 MB/s" (" · USB" when the buffer is on the USB drive) while a torrent is active; 0 when there is none */
 void p2p_pace(int playing, int buffering, double durationSec); /* the player, about once a second */
-void p2p_player_closed(void);                   /* torrents and their data go; the engine stays warm a while */
+void p2p_player_closed(void);                   /* torrents and their data go; the engine stays warm for 90 s */
 int  p2p_moved_recently(void);                  /* the window changed place in the last 30 s (a USB drive went): a stream error then is worth one retry */
 void p2p_pump(void);
 void p2p_shutdown(void);                        /* at exit: the engine stops (a few seconds at most) and its window files go */                            /* once per frame */

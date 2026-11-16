@@ -1,4 +1,6 @@
 #include "core/tvtune.h"
+#include "core/memctl.h"
+#include "core/sync.h"
 #include <stdint.h>
 #include <math.h>
 /* Origin, native. The window, the GL context, the frame loop; everything else is in
@@ -178,6 +180,7 @@ static void p2p_test_tick(int frame) {
 }
 int main(int argc, char **argv) {
   (void)argc; (void)argv;
+  mem_tune(); /* before anything is allocated */
   setlocale(LC_NUMERIC, "C");
 #ifdef SB_MAC
   signal(SIGABRT, on_alarm); signal(SIGSEGV, on_alarm); signal(SIGBUS, on_alarm); /* a crash leaves a backtrace in the log */
@@ -386,10 +389,21 @@ int main(int argc, char **argv) {
         int lvl = 0; if (tot > 0 && rss > 0) { if (rss > tot * 30 / 100) lvl = 1; if (rss > tot * 40 / 100) lvl = 2; }
         if (fr >= 0 && fr < 60 && lvl < 1) lvl = 1; if (fr >= 0 && fr < 35) lvl = 2; /* (a 641 MB TV runs with 70-120 MB free on its own: only real shortage counts) */
         int film = player_open() && !player_page_under();
+        if (lvl > gLvl) mem_trim_soon(0.2, lvl >= 2 ? "the TV is short of memory" : "the TV is getting tight");
         if (lvl >= 2) { img_release_unused(4); gfx_pool_clear(); }
         else if (lvl == 1) { img_release_unused(img_budget_mb() / 2); gfx_pool_clear(); }
         else if (film) { img_release_unused(12); gfx_pool_clear(); } /* (back on the page, they come again as they are drawn) */
         if (lvl != gLvl) { fprintf(stderr, "[mem] guard %d -> %d: app %d MB, TV free %d MB of %d%s\n", gLvl, lvl, rss, fr, tot, film ? " (a film plays)" : ""); gLvl = lvl; } } }
+    { /* the moments something big is let go, acted on at once (the guard above looks every 2 s): a film covering the
+         pages (their pictures, the textures kept for reuse and the lines of text go: all made again as they are drawn),
+         a film closed (its lists, subtitles and the torrent's buffers were freed), the app sent to the back (the TV
+         keeps it alive there until it is left with Back: it holds as little as it can meanwhile). What was freed is
+         then handed back to the TV (memctl), off the drawing thread */
+      static int wasFilm, wasOpen, wasAway; int open = player_open(), film = open && !player_page_under(), aw = sync_away();
+      if (film && !wasFilm) { img_release_unused(12); gfx_pool_clear(); text_gc(); mem_trim_soon(1.0, "a film covers the pages"); }
+      if (!open && wasOpen) { gfx_pool_clear(); mem_trim_soon(0.8, "the film closed"); }
+      if (aw && !wasAway) { if (!open) { img_release_unused(4); gfx_pool_clear(); text_gc(); } mem_trim_soon(0.5, "sent to the back"); }
+      wasFilm = film; wasOpen = open; wasAway = aw; mem_pump(); }
     { /* every 30 s a line of where the memory is (the TV ends an app that takes too much: the shared log then says what grew) */
       static Uint32 memAt; if (SDL_GetTicks() - memAt >= 30000 || !memAt) { memAt = SDL_GetTicks(); int rss, swp; plat_mem_self(&rss, &swp); long tb, pb; int tn; gfx_mem(&tb, &tn, &pb);
         static const char *SN[] = { "sign-in", "home", "discover", "library", "title", "similar", "search", "settings" };

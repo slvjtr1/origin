@@ -5,4 +5,5 @@
 #define SB_SYNC_H
 void sync_init(void);   /* at start, before the first screen */
 void sync_tick(void);   /* once a frame */
+int  sync_away(void);   /* the TV has the app at the back (another app, the home launcher, the screen saver) */
 #endif

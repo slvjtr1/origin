@@ -21,6 +21,7 @@
 #include "core/json.h"
 #include "platform/plat.h"
 #include "screens/player.h"
+#include "ui/usbprep.h"
 #include "cJSON.h"
 #include <dirent.h>
 #include <errno.h>
@@ -237,14 +238,15 @@ void usb_pump(void) {
     int dev = getenv("SB_USB_ON") != NULL; /* development: the drive counts as switched on, nothing stored */
     int want = h && (dev || !strcmp(store_get(key, "false"), "true"));
     pthread_mutex_lock(&mu); if (want != on) { on = want; serial++; seen = serial; } pthread_mutex_unlock(&mu);
-    if (!h) { ask = 0; askedFor[0] = 0; update_notice_cancel(open_usb_setting); }
-    else if (!dev && !store_get(key, NULL) && strcmp(askedFor, d.id)) { ask = 1; snprintf(askedFor, sizeof askedFor, "%s", d.id); fprintf(stderr, "[usb] %s never answered: the notice comes once the app is calm\n", key); } /* never answered: asked once while it stays */
+    if (!h) { ask = 0; askedFor[0] = 0; update_notice_cancel(open_usb_setting); usbprep_gone(); }
+    else if (!dev && !store_get(key, NULL) && strcmp(askedFor, d.id)) { ask = 1; snprintf(askedFor, sizeof askedFor, "%s", d.id); fprintf(stderr, "[usb] %s is new: checked once the app is calm\n", key); } /* a new drive: checked once (ui/usbprep.c), then on by itself when it is fast enough */
     else if (!dev && strcmp(askedFor, d.id)) { snprintf(askedFor, sizeof askedFor, "%s", d.id); fprintf(stderr, "[usb] %s answered before (%s): no notice\n", key, store_get(key, "")); }
     /* the TV has a drive this app cannot reach: said once while it stays */
     char nm[64]; int u = !h && usb_unreachable(nm, sizeof nm);
     if (!u) tellJail = 0; else if (tellJail == 0) tellJail = 1;
   }
-  if (ask && calm()) { ask = 0; fprintf(stderr, "[usb] notice: use the drive for torrents?\n"); update_notice(T("USB drive found"), T("Set up"), open_usb_setting); }
+  usbprep_pump();
+  if (ask && calm() && !usbprep_busy()) { ask = 0; UsbDrive d; if (usb_drive(&d) && !strcmp(d.id, askedFor)) usbprep_show(&d, key); }
   if (tellJail == 1 && calm()) { tellJail = 2; update_notice(T("Restart the TV for USB"), T("Why"), open_usb_restart); } /* (like the update: from the Settings icon) */
 }
 void usb_shutdown(void) {

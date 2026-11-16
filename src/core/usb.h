@@ -1,7 +1,7 @@
 /* USB drives for the torrent cache. A background thread looks at the mounted filesystems every few seconds (never
-   the drawing thread) and keeps the best writable USB drive: when one comes that was never answered, the notice
-   slides out of the Settings icon ("USB drive found: use it for torrents?"); OK turns it on for that drive (kept per
-   drive in the store). While it is on and the drive is there, torrents keep their window on it (p2p.c); when it goes,
+   the drawing thread) and keeps the best writable USB drive: when one comes that was never seen, a card says what is
+   being checked (ui/usbprep.c: it can be written, how fast it is) and a drive fast enough is switched on by itself
+   (kept per drive in the store; Settings > Playback turns it off). While it is on and the drive is there, torrents keep their window on it (p2p.c); when it goes,
    they move on by themselves. Development: SB_USB_DIR=<folder> stands in for a drive mounted there, SB_USB_ON=1 counts it as switched on. */
 #ifndef SB_USB_H
 #define SB_USB_H

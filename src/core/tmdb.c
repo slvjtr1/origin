@@ -243,7 +243,7 @@ static void install(Job *j) {
   loc_free(e->v); e->v = j->v; e->state = S_READY; if (!j->v->pub.light) e->fullAsked = 0; /* a page's lookup still on its way keeps the page waiting */
 }
 /* Settings > Language > Titles and descriptions: the app's language (auto), English or Arabic, whatever the app's */
-const char *tmdb_lang(void) { const char *v = store_get("metaLang", "auto"); return !strcmp(v, "en") ? "en" : !strcmp(v, "ar") ? "ar" : i18n_lang(); }
+const char *tmdb_lang(void) { return "en"; } /* English only for now */
 static int inited;
 static void drain(void) {
   if (!inited) tmdb_init(); /* on first use: nothing to start at launch */

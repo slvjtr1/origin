@@ -18,9 +18,9 @@ static void index_build(void) {
   idx = calloc(idxCap, sizeof *idx); const cJSON *it;
   cJSON_ArrayForEach(it, dict) if (it->string) { unsigned i = hash_str(it->string) & (idxCap - 1); while (idx[i] && strcmp(idx[i]->string, it->string)) i = (i + 1) & (idxCap - 1); idx[i] = it; }
 }
-static const char *codes[] = { "en", "ar" };
+static const char *codes[] = { "en" }; /* English only for now */
 #define NLANG ((int)(sizeof codes / sizeof codes[0]))
-static const char *names[] = { "English", "العربية" };
+static const char *names[] = { "English" };
 
 static char *read_all(const char *p) { FILE *f = fopen(p, "rb"); if (!f) return NULL; fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET); char *b = malloc(n + 1); size_t g = fread(b, 1, n, f); b[g] = 0; fclose(f); return b; }
 static int known(const char *c) { for (int i = 0; i < NLANG; i++) if (!strcmp(codes[i], c)) return 1; return 0; }

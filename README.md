@@ -6,7 +6,7 @@
 
 <h1 align="center">ORIGIN</h1>
 
-<p align="center"><b>A media center for your addons on LG webOS and Google TV. Native, written in C: fast, quiet, in English or Arabic.</b></p>
+<p align="center"><b>A media center for your addons on LG webOS TVs and Google TV. Native, fast and quiet, with your Stremio account and addons everywhere.</b></p>
 
 <p align="center">
   <a href="https://github.com/slvjtr1/origin/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/slvjtr1/origin?label=release&color=7c5cff"></a>
@@ -72,7 +72,7 @@
 | **Library and progress** | Library, watched episodes and Continue Watching follow your account. |
 | **Several accounts** | Kept on the TV, a press apart. |
 | **Look** | Twenty accent colours, or the colours of the title you open; card corners; a 12 or 24 hour clock; a screensaver. |
-| **Arabic or English** | The whole app, end to end. |
+| **Your subtitle languages** | Pick one or more (English and Arabic, say): only those show, from addons and OpenSubtitles. |
 | **Reduce for old TVs** | Google TV: a lighter app for slow devices (720p drawing, flat glass, no shadows, short moves, a smaller buffer). On by itself where memory is short. |
 | **Updates from inside** | Settings › About. Beta updates are a switch away, never installed by themselves. |
 
@@ -89,7 +89,7 @@ New versions install from inside the app: **Settings › About**. Install steps 
 
 ## Good to know
 
-- **Language:** Settings › Language. The app follows the TV's language until you choose one.
+- **Language:** ORIGIN is in English only for now. We are sorry to everyone who used it in Arabic: Arabic caused big problems in building the app, and for now the app needs English alone. Arabic subtitles are still fully supported: choose them in the subtitle settings.
 - **Links from addons** show a code: scan it and the site opens the link on your phone.
 - **Something wrong?** Settings › About › Share logs, then scan the code: the site fills in the report.
 - **Upscale and the other picture settings on LG webOS** need Homebrew Channel with root.

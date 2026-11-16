@@ -229,12 +229,22 @@ static void b64(const char *in, char *out, size_t cap) {
     out[o++] = A[v >> 18 & 63]; out[o++] = A[v >> 12 & 63]; out[o++] = i + 1 < n ? A[v >> 6 & 63] : '='; out[o++] = i + 2 < n ? A[v & 63] : '='; }
   out[o] = 0;
 }
+/* Settings › Subtitles › Only these languages: the default language and the second one; nothing chosen lets all through */
+int subs_wanted(const char *lang) {
+  if (strcmp(store_get("subsOnly", "true"), "true")) return 1;
+  const char *a = store_get("subsLang", "eng"), *b = store_get("subsLang2", "");
+  if (!*a && !*b) return 1;
+  return (*a && subs_lang_match(lang, a)) || (*b && subs_lang_match(lang, b));
+}
 int subs_os_mode(void) { const char *m = store_get("osSubs", "ai"); return !strcmp(m, "off") ? 0 : !strcmp(m, "human") ? 1 : 2; } /* 0 off, 1 made by people only, 2 machine-translated ones too */
 int subs_os_base(char *out, size_t cap) {
   int m = subs_os_mode(); if (!m) { out[0] = 0; return 0; }
   char nm[48] = "", cfg[240], enc[340]; const char *n = subs_lang_name(store_get("subsLang", "eng"));
   if (n) { snprintf(nm, sizeof nm, "%s", n); for (char *p = nm; *p; p++) { if (*p >= 'A' && *p <= 'Z') *p += 32; if (!(*p >= 'a' && *p <= 'z')) { nm[0] = 0; break; } } } /* (a name of one plain word: the service's own spelling) */
-  if (nm[0] && strcmp(nm, "english")) snprintf(cfg, sizeof cfg, "{\"langs\":[\"%s\",\"english\"],\"source\":\"all\",\"aiTranslated\":%s,\"autoAdjustment\":true}", nm, m == 2 ? "true" : "false");
+  char nm2[48] = ""; const char *n2 = subs_lang_name(store_get("subsLang2", ""));
+  if (n2) { snprintf(nm2, sizeof nm2, "%s", n2); for (char *p = nm2; *p; p++) { if (*p >= 'A' && *p <= 'Z') *p += 32; if (!(*p >= 'a' && *p <= 'z')) { nm2[0] = 0; break; } } }
+  if (nm[0] && nm2[0] && strcmp(nm, nm2)) snprintf(cfg, sizeof cfg, "{\"langs\":[\"%s\",\"%s\"],\"source\":\"all\",\"aiTranslated\":%s,\"autoAdjustment\":true}", nm, nm2, m == 2 ? "true" : "false");
+  else if (nm[0] && strcmp(nm, "english")) snprintf(cfg, sizeof cfg, "{\"langs\":[\"%s\",\"english\"],\"source\":\"all\",\"aiTranslated\":%s,\"autoAdjustment\":true}", nm, m == 2 ? "true" : "false");
   else snprintf(cfg, sizeof cfg, "{\"langs\":[\"english\"],\"source\":\"all\",\"aiTranslated\":%s,\"autoAdjustment\":true}", m == 2 ? "true" : "false");
   b64(cfg, enc, sizeof enc); snprintf(out, cap, "%s/%s", OS_PRO, enc); return 1;
 }
@@ -249,6 +259,7 @@ static void on_list(int st, const unsigned char *b, size_t n, void *ud) {
   SubEntry *out = calloc(256, sizeof *out); int no = 0; char langs[64][8]; int per[64], nl = 0;
   if (arr) cJSON_ArrayForEach(s, arr) { if (no >= 256) break; const char *url = js_str(s, "url", NULL); char lang[8]; snprintf(lang, sizeof lang, "%s", js_str(s, "lang", "")); for (char *p = lang; *p; p++) if (*p >= 'A' && *p <= 'Z') *p += 32; if (!*lang || !url || strlen(url) >= sizeof out->url) continue;
     int li = -1; for (int i = 0; i < nl; i++) if (!strcmp(langs[i], lang)) li = i; if (li < 0 && nl < 64) { li = nl++; snprintf(langs[li], 8, "%s", lang); per[li] = 0; } if (li < 0) continue;
+    if (!subs_wanted(lang)) continue;
     if (++per[li] > 12) continue; SubEntry *e = &out[no++]; snprintf(e->lang, sizeof e->lang, "%s", lang); const char *nm = subs_sub_name(lang);
     if (nm) snprintf(e->name, sizeof e->name, "%s", nm); else { snprintf(e->name, sizeof e->name, "%s", lang); for (char *p = e->name; *p; p++) if (*p >= 'a' && *p <= 'z') *p -= 32; }
     snprintf(e->url, sizeof e->url, "%s", url); snprintf(e->addon, sizeof e->addon, "OpenSubtitles"); e->from = SUB_FALLBACK; e->order = 999; e->n = per[li]; subs_entry_facts(e, s); if (os_ai(s)) snprintf(e->label, sizeof e->label, "AI"); }
@@ -296,6 +307,7 @@ static void find_deliver(FindQ *f) {
 }
 static void find_add(FindQ *f, const SubEntry *e, int n) {
   for (int i = 0; i < n; i++) { int dup = 0; for (int k = 0; k < f->n && !dup; k++) dup = !strcmp(f->all[k].url, e[i].url); if (dup) continue;
+    if (e[i].from != SUB_FALLBACK && !subs_wanted(e[i].lang)) continue; /* only the chosen languages (OpenSubtitles' list is filtered as it comes) */
     if (f->n == f->cap) { f->cap = f->cap ? f->cap * 2 : 64; f->all = realloc(f->all, f->cap * sizeof *f->all); }
     f->all[f->n] = e[i]; entry_name(&f->all[f->n]); f->n++; }
   qsort(f->all, f->n, sizeof *f->all, cmp_entry);

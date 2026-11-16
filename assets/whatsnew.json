@@ -1,31 +1,15 @@
 {
-  "version": "1.2.0",
+  "version": "1.3.0",
   "items": [
     {
-      "icon": "p_src",
-      "title": "Super clean sources",
-      "text": "Sources that are really another title (a spin-off, a sequel, a film of another year), another episode or a cinema recording are left out before you see them. The last row of the list says how many, and shows them if you ask."
-    },
-    {
-      "icon": "eyeOff",
-      "title": "The wrong video never comes back",
-      "text": "When a source plays something else than what you opened, the player notices by itself and moves to the next one. You can also say so from the sources list: that source stays out for good."
-    },
-    {
       "icon": "wn_subs",
-      "title": "Names stay in the subtitles",
-      "text": "A name written between brackets or quotes is no longer lost with the marks around it. Lines that advertise a site or credit the translators are hidden."
+      "title": "Only your subtitle languages",
+      "text": "Choose a default and a second subtitle language, Arabic and English for example: subtitles in other languages are left out, from your addons and OpenSubtitles alike. Settings, Subtitles."
     },
     {
       "icon": "p_subs",
-      "title": "Old Arabic subtitles read right",
-      "text": "Subtitle files and built-in tracks saved in the old Arabic encoding now show as Arabic, not as symbols."
+      "title": "English only, for now",
+      "text": "ORIGIN is in English for the time being. We are sorry to everyone who used it in Arabic: Arabic caused big problems in building the app. Arabic subtitles still work fully."
     }
-  ],
-  "support": {
-    "title": "Thank you",
-    "message": "Thank you!",
-    "url": "https://slvjtr1.github.io/origin/",
-    "github": "https://github.com/slvjtr1/origin"
-  }
+  ]
 }

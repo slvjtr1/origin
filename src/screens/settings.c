@@ -78,7 +78,7 @@ static const Opt CORNERO[] = { { "round", "Round" }, { "soft", "Soft" }, { "squa
 static const Opt ACCENT_OPTS[] = { { "logo", "From the logo" }, { "adaptive", "From the artwork" }, { "purple", "Purple" }, { "violet", "Violet" }, { "fuchsia", "Fuchsia" }, { "pink", "Pink" }, { "rose", "Rose" }, { "red", "Red" }, { "orange", "Orange" }, { "amber", "Amber" }, { "gold", "Gold" }, { "lime", "Lime" }, { "green", "Green" }, { "emerald", "Emerald" }, { "teal", "Teal" }, { "cyan", "Cyan" }, { "sky", "Sky" }, { "blue", "Blue" }, { "indigo", "Indigo" }, { "graphite", "Graphite" } };
 #define NCAT 11
 #define MAXROWS 48
-static Setting playBase[17], playS[19], subsBase[20], subsS[20], audS[6], lookS[9], langS[3], keyS[4], addonS[40], acctS[1], supS[8], picS[6], accS[8];
+static Setting playBase[17], playS[19], subsBase[22], subsS[22], audS[6], lookS[9], langS[3], keyS[4], addonS[40], acctS[1], supS[8], picS[6], accS[8];
 static Cat cats[NCAT]; static int ncat; /* (Keys leaves when this build carries every key) */
 static int cat_of(const Setting *opts) { for (int i = 0; i < ncat; i++) if (cats[i].opts == opts) return i; return -1; }
 
@@ -178,7 +178,7 @@ static int about_opts(void) {
 static const char *const RESET_KEYS[] = { "accent", "animeAudioTrack", "betaUpdates", "cardCorner", "appIcon", "aspectMode", "autoBest", "bestRow", "bgTrailer", "bgTrailerVol",
   "bingeWatch", "enableNextVideo", "blurUnseen", "clockFmt", "defaultAudioTrack", "dtsMode", "audioPassthrough", "dv7Convert", "enableDefaultAudioTrack", "homeRows",
   "metaLang", "nerdStats", "cleanSources", "filmEnhance", "gpuUpscale", "searchKnownOnly", "seekStep", "skipIntro", "skipShowSec", "ssDelay", "subsAssStyle", "subsAuto", "subsBgStyle", "subsBold", "subsColor",
-  "subsFollow", "subsFont", "subsLang", "subsOutline", "subsOutlineColor", "subsOutlineWidth", "subsPos", "subsShadow", "subsShadowDist",
+  "subsFollow", "subsFont", "subsLang", "subsLang2", "subsOnly", "subsOutline", "subsOutlineColor", "subsOutlineWidth", "subsPos", "subsShadow", "subsShadowDist",
   "subsShadowSoft", "subsShadowStrength", "subtitleSize", "uiSound", "uiSoundVol", "reduceMotion", "animeEnhance", "brightBoost", "darkSee", "voiceClear", "evenVolume", "subsNoSdh", "subsNoAds", "kbLang", "libSort", "osSubs", "liteMode", "ytHd", NULL };
 static void enter(const void *p); static void show_cat(int i, int dir);
 static void do_reset(void *ud) { (void)ud;
@@ -223,7 +223,8 @@ static void subs_layout(void) {
   subsS[n++] = subsBase[17]; /* without [coughs] and the like */
   subsS[n++] = subsBase[19]; /* without adverts and credits */
   subsS[n++] = subsBase[18]; /* the built-in OpenSubtitles */
-  for (int i = 0; i < 6; i++) subsS[n++] = subsBase[i]; /* language, size, font, bold, colour, the outline's switch */
+  subsS[n++] = subsBase[0]; subsS[n++] = subsBase[20]; subsS[n++] = subsBase[21]; /* the languages, and only them */
+  for (int i = 1; i < 6; i++) subsS[n++] = subsBase[i]; /* size, font, bold, colour, the outline's switch */
   if (ol) { subsS[n++] = subsBase[6]; subsS[n++] = subsBase[7]; }
   subsS[n++] = subsBase[8]; if (sh) { subsS[n++] = subsBase[9]; subsS[n++] = subsBase[10]; subsS[n++] = subsBase[11]; }
   for (int i = 12; i < 15; i++) subsS[n++] = subsBase[i]; /* height, background, styled subtitles */
@@ -254,6 +255,8 @@ static void build(void) {
   set_s(&playBase[8], "skipIntro", "Skip intro, recap and credits", "A button that skips them when you press OK, or automatically", SKIPO, 3, "button");
   set_s(&playBase[6], "bgTrailerVol", "Volume", "The sound comes up softly to this level", SVOL, 10, "70"); playBase[6].sub = 1; /* (shown right under the trailers while they are on: play_layout; drawn as theirs, set in) */
   usb_row();
+  set_s(&subsBase[20], "subsLang2", "Second subtitle language", "Also offered, after the default one", LANG_OPTS, 18, "");
+  set_s(&subsBase[21], "subsOnly", "Only these languages", "Subtitles in other languages are left out, from your addons and OpenSubtitles", OO, 2, "true");
   set_s(&subsBase[15], "subsAuto", "Turn on subtitles automatically", "When a film starts: your addons' first, else OpenSubtitles, else the film's own track; synced quietly", OO, 2, "true");
   set_s(&subsBase[19], "subsNoAds", "Hide adverts and credits", "Lines that advertise a site or name who made the subtitles are left out", OO, 2, "true");
   set_s(&subsBase[17], "subsNoSdh", "Hide sound descriptions", "[coughs], (gunshots) and speakers' names left out of the lines", OO, 2, "true");
@@ -330,13 +333,13 @@ static void build(void) {
     { "Screens", "Language", "set_lang", "The app, and titles and descriptions", NULL, langS, nl, 0 },
     { "Account and system", "Accounts", "set_acct", "Switch between your Stremio accounts on this TV", NULL, accS, nacc, 0 },
     { "Account and system", "Addons", "set_addon", "", NULL, addonS, na, 0 },
-    { "Account and system", "Keys", "set_keys", "Titles and descriptions in your language", "keys", keyS, nk, 0 },
+    { "Account and system", "Keys", "set_keys", "Titles, descriptions and pictures from TMDB", "keys", keyS, nk, 0 },
     { "Account and system", "About", "info", "Version, updates, logs and support", "about", supS, nab, 0 },
     { "", "Log out", "set_out", "", NULL, acctS, 1, 1 } };
 #ifdef SB_ANDROID
   c[2].ds = "Audio language, anime, interface sounds";
 #endif
-  ncat = 0; for (int i = 0; i < NCAT; i++) if (c[i].opts != keyS || nk) {
+  ncat = 0; for (int i = 0; i < NCAT; i++) if ((c[i].opts != keyS || nk) && c[i].opts != langS) { /* (English only for now: no Language page) */
 #ifdef SB_ANDROID
     if (c[i].opts == lookS) c[i].n = 8; /* (Reduce for old TVs) */
 #endif

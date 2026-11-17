@@ -12,6 +12,7 @@
 #include <string.h>
 #include <locale.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <signal.h>
 #ifdef SB_MAC
 #include <execinfo.h>
@@ -64,11 +65,19 @@ static void prof_start(void) {
     fprintf(stderr, "[prof] no thread timer, CPU time instead\n"); }
   struct itimerval it = { { 0, 2000 }, { 0, 2000 } }; setitimer(ITIMER_PROF, &it, NULL);
 }
+/* the terminal's / device log's copy of a crash (the kept log gets its own from core/applog.c first): only calls that
+   are safe in a signal handler (a crash inside malloc or printf holds their locks; fopen / fputs here waited on them
+   for ever) */
+static void crash_put(const char *s) { size_t n = strlen(s); while (n) { ssize_t w = write(2, s, n); if (w <= 0) return; s += w; n -= (size_t)w; } }
+static void crash_hex(unsigned long v) { char d[20]; int k = 0; do { d[k++] = "0123456789abcdef"[v & 15]; v >>= 4; } while (v && k < 20); char o[24]; int n = 0; o[n++] = '0'; o[n++] = 'x'; while (k) o[n++] = d[--k]; o[n] = 0; crash_put(o); }
 static void on_crash(int sig, siginfo_t *si, void *uc) {
-  ucontext_t *u = uc; char b[512]; int n = snprintf(b, sizeof b, "[crash] signal %d addr %p pc %p lr %p sp %p\n", sig, si ? si->si_addr : NULL, (void *)u->uc_mcontext.arm_pc, (void *)u->uc_mcontext.arm_lr, (void *)u->uc_mcontext.arm_sp);
-  if (write(2, b, n) < 0) {}
-  FILE *m = fopen("/proc/self/maps", "r"); if (m) { char l[300]; while (fgets(l, sizeof l, m)) if (strstr(l, "stremioorigin")) fputs(l, stderr); fclose(m); }
-  fflush(stderr); _exit(4);
+  ucontext_t *u = uc; char sn[4] = { (char)('0' + sig / 10 % 10), (char)('0' + sig % 10), 0, 0 };
+  crash_put("[crash] signal "); crash_put(sn); crash_put(" addr "); crash_hex((unsigned long)(si ? si->si_addr : NULL));
+  crash_put(" pc "); crash_hex((unsigned long)u->uc_mcontext.arm_pc); crash_put(" lr "); crash_hex((unsigned long)u->uc_mcontext.arm_lr); crash_put(" sp "); crash_hex((unsigned long)u->uc_mcontext.arm_sp); crash_put("\n");
+  int m = open("/proc/self/maps", O_RDONLY); if (m >= 0) { static char b[4096], l[300]; size_t ll = 0; ssize_t r;
+    while ((r = read(m, b, sizeof b)) > 0) for (ssize_t i = 0; i < r; i++) { if (b[i] != '\n') { if (ll < sizeof l - 2) l[ll++] = b[i]; continue; } l[ll] = 0; if (strstr(l, "stremioorigin")) { l[ll] = '\n'; l[ll + 1] = 0; crash_put(l); } ll = 0; }
+    close(m); }
+  _exit(4);
 }
 #endif
 #ifdef SB_ANDROID
@@ -371,6 +380,7 @@ int main(int argc, char **argv) {
         static Uint32 logT; static int logN; if (SDL_GetTicks() - logT > 1000) { logT = SDL_GetTicks(); logN = 0; }
         if (tot > 15.0 && logN++ < 20) fprintf(stderr, "[slow] f%d %s %.0f ms: pumps %.0f (events %u net %u pictures %u) tick %u draw %u end %u evict %u gpu %.1f swap %u | %d calls %d quads\n", frame, stress_screen(), tot, accPreFrame, tEv, tNet, tImg, tA - tCpu0, tB - tA, tC - tB, tCpu1 - tC, gpu, tSwap - tCpu1, gfx_draw_calls(), gfx_quads()); } }
     nerds_frame((float)(tCpu1 - tCpu0), gfx_draw_calls(), gfx_quads());
+    mem_frame((double)(tSwap - tCpu0) + accPreFrame); /* (a trim running now is charged for a slow frame: memctl logs the longest) */
     static double accCpu, accSwap; static int accN; accCpu += tCpu1 - tCpu0; accSwap += tSwap - tCpu1; accN++;
 #ifdef SB_MAC
     if (stress_on()) pace_wait((double)(tSwap - tCpu0) + accPreFrame); else SDL_Delay(16); /* a stress run on the Mac checks the run itself (its numbers are not the TV's) */
@@ -394,25 +404,43 @@ int main(int argc, char **argv) {
         else if (lvl == 1) { img_release_unused(img_budget_mb() / 2); gfx_pool_clear(); }
         else if (film) { img_release_unused(12); gfx_pool_clear(); } /* (back on the page, they come again as they are drawn) */
         if (lvl != gLvl) { fprintf(stderr, "[mem] guard %d -> %d: app %d MB, TV free %d MB of %d%s\n", gLvl, lvl, rss, fr, tot, film ? " (a film plays)" : ""); gLvl = lvl; } } }
-    { /* the moments something big is let go, acted on at once (the guard above looks every 2 s): a film covering the
-         pages (their pictures, the textures kept for reuse and the lines of text go: all made again as they are drawn),
-         a film closed (its lists, subtitles and the torrent's buffers were freed), the app sent to the back (the TV
-         keeps it alive there until it is left with Back: it holds as little as it can meanwhile). What was freed is
-         then handed back to the TV (memctl), off the drawing thread */
-      static int wasFilm, wasOpen, wasAway; int open = player_open(), film = open && !player_page_under(), aw = sync_away();
-      if (film && !wasFilm) { img_release_unused(12); gfx_pool_clear(); text_gc(); mem_trim_soon(1.0, "a film covers the pages"); }
-      if (!open && wasOpen) { gfx_pool_clear(); mem_trim_soon(0.8, "the film closed"); }
-      if (aw && !wasAway) { if (!open) { img_release_unused(4); gfx_pool_clear(); text_gc(); } mem_trim_soon(0.5, "sent to the back"); }
+    { /* the moments something big can be let go (the guard above looks every 2 s). All of it here, between frames, on
+         the drawing thread: nothing is queued for drawing now and every texture is the GL thread's.
+         - a film covering the pages: once it has covered them for FILM_TRIM_S (a peek at the film and back reloads
+           nothing), the page's pictures not drawn since go down to FILM_KEEP_MB (the most recent kept: the way back is
+           quick), and its lines of text; what the player draws itself is drawn every frame and stays;
+         - a film closed: the textures kept for reuse, and the C library's free space (its lists, subtitles and the
+           torrent's buffers were freed);
+         - the app at the back (the TV said so, or the focus stayed away: core/sync.c; a system keyboard or menu over
+           the app is not that): no picture starts loading, and after AWAY_TRIM_S the pictures go down to AWAY_KEEP_MB
+           (a quick look at the home screen reloads nothing). Back in front, they load again as they are drawn.
+         The memory freed is handed back to the TV by memctl, on its own thread, measured */
+#define FILM_TRIM_S 1.5
+#define FILM_KEEP_MB 8
+#define AWAY_TRIM_S 10.0
+#define AWAY_KEEP_MB 4
+      static int wasFilm, wasOpen, wasAway, filmDone, awayDone; static double filmAt;
+      int open = player_open(), film = open && !player_page_under() && player_cover() >= 0.999f, aw = sync_away();
+      if (film && !wasFilm) { filmAt = SDL_GetTicks() / 1000.0; filmDone = 0; gfx_pool_clear(); mem_note("a film covers the pages"); }
+      if (film && !filmDone && SDL_GetTicks() / 1000.0 - filmAt >= FILM_TRIM_S) { filmDone = 1;
+        unsigned age = (unsigned)(FILM_TRIM_S * 40); /* frames: (at the TV's 48 to 60 a second) drawn before the film covered them */
+        img_trim(FILM_KEEP_MB, age); int tl = text_trim(age); fprintf(stderr, "[mem] %d line(s) of text let go under the film\n", tl); mem_trim_soon(0.2, "a film covers the pages"); }
+      if (!open && wasOpen) { gfx_pool_clear(); mem_trim_soon(0.8, "the film closed"); mem_note("the film closed"); }
+      if (aw && !wasAway) { img_hold(1); awayDone = 0; mem_note("sent to the back"); }
+      if (aw && !awayDone && sync_away_for() >= AWAY_TRIM_S) { awayDone = 1; if (!open) { img_trim(AWAY_KEEP_MB, 0); gfx_pool_clear(); } mem_trim_soon(0.2, "at the back"); }
+      if (!aw && wasAway) { img_hold(0); mem_note("back in front"); }
       wasFilm = film; wasOpen = open; wasAway = aw; mem_pump(); }
     { /* every 30 s a line of where the memory is (the TV ends an app that takes too much: the shared log then says what grew) */
       static Uint32 memAt; if (SDL_GetTicks() - memAt >= 30000 || !memAt) { memAt = SDL_GetTicks(); int rss, swp; plat_mem_self(&rss, &swp); long tb, pb; int tn; gfx_mem(&tb, &tn, &pb);
         static const char *SN[] = { "sign-in", "home", "discover", "library", "title", "similar", "search", "settings" };
-        fprintf(stderr, "[mem] app %d MB (swap %d) · TV free %d MB · pictures %d of %d MB · textures %ld MB in %d (kept for reuse %ld MB) · %s%s%s\n", rss, swp, plat_mem_free_mb(), img_used_mb(), img_budget_mb(),
-          tb >> 20, tn, pb >> 20, (unsigned)SCR < 8 ? SN[SCR] : "?", player_open() ? " · player" : "", asssubs_on() ? " · styled subtitles" : ""); } }
+        size_t nu = 0, np = 0, nb = 0; unsigned nr = 0; net_mem_stats(&nu, &np, &nb, &nr);
+        fprintf(stderr, "[mem] app %d MB (swap %d) · TV free %d MB · pictures %d of %d MB · textures %ld MB in %d (kept for reuse %ld MB) · answers %u KB (most %u of %u MB, %u refused) · %s%s%s%s\n", rss, swp, plat_mem_free_mb(), img_used_mb(), img_budget_mb(),
+          tb >> 20, tn, pb >> 20, (unsigned)(nu >> 10), (unsigned)(np >> 20), (unsigned)(nb >> 20), nr, (unsigned)SCR < 8 ? SN[SCR] : "?", player_open() ? " · player" : "", asssubs_on() ? " · styled subtitles" : "", sync_away() ? " · at the back" : sync_blurred() ? " · focus elsewhere" : ""); } }
     if (shot && frame == shotAt) { screenshot(shot, dw, dh); if (getenv("SB_SHOT_EXIT")) app_quit(); }
   }
   fprintf(stderr, "[exit] after %d frames\n", frame);
   p2p_shutdown(); /* the engine's threads end and its buffer files go */
+  mem_shutdown();
   tvtune_quit(); /* the TV's picture and sound as they were */
   store_flush();
 #ifdef SB_ANDROID

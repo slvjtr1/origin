@@ -24,6 +24,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <sys/syscall.h>
 #ifndef SB_APP_ID
 #define SB_APP_ID "tv.stremioorigin.app"
 #endif
@@ -97,19 +98,41 @@ static void drain_now(void) {
   dup2(teeFd, 2);
   while ((n = read(pipeR, b, sizeof b)) > 0) write_all(teeFd, b, (size_t)n);
 }
+/* The report is written with what is safe inside a signal handler only: write(), read(), open(), no stdio, no malloc,
+   no lock (a crash inside malloc or printf holds their locks: taking them again here hung the app instead of ending
+   it, and the report was lost). It runs on a stack of its own on the main thread (a stack overflow still reports),
+   once (a second thread crashing meanwhile waits for the first report to end the process), and reads the crashed
+   stack only where the kernel says it can be read. */
+typedef struct { char b[700]; int n; } SBuf;
+static void sb_s(SBuf *s, const char *t) { while (*t && s->n < (int)sizeof s->b - 1) s->b[s->n++] = *t++; }
+static void sb_u(SBuf *s, unsigned long v) { char d[24]; int k = 0; do { d[k++] = (char)('0' + v % 10); v /= 10; } while (v && k < 24); while (k && s->n < (int)sizeof s->b - 1) s->b[s->n++] = d[--k]; }
+static void sb_x(SBuf *s, unsigned long v) { char d[24]; int k = 0; do { d[k++] = "0123456789abcdef"[v & 15]; v >>= 4; } while (v && k < 24); while (k && s->n < (int)sizeof s->b - 1) s->b[s->n++] = d[--k]; }
+static void sb_put(SBuf *s, int fd) { if (s->n) write_all(fd, s->b, (size_t)s->n); s->n = 0; }
+static int probeW = -1, probeR = -1, crashing; static long mainTid;
+static int readable(const void *p, size_t n) { /* the kernel copies it or says EFAULT: a bad address never faults here */
+  if (probeW < 0) return 0; ssize_t w = write(probeW, p, n); char t[1024]; while (read(probeR, t, sizeof t) > 0) {}
+  return w == (ssize_t)n; }
 static void on_signal(int sig, siginfo_t *si, void *uc) {
+  if (__atomic_exchange_n(&crashing, 1, __ATOMIC_ACQ_REL)) { for (;;) pause(); } /* (the first report ends the process) */
   drain_now();
   if (fileFd >= 0) { /* a mark in the kept log: the next share shows that the app died here */
-    char m[64] = "[crash] signal "; size_t k = strlen(m); char d[8]; int nd = 0, v = sig; do { d[nd++] = (char)('0' + v % 10); v /= 10; } while (v && nd < 8);
-    while (nd) m[k++] = d[--nd]; m[k++] = '\n'; write_all(fileFd, m, k);
+    SBuf s; s.n = 0; sb_s(&s, "[crash] signal "); sb_u(&s, (unsigned long)sig);
+#ifdef SYS_gettid
+    { long tid = syscall(SYS_gettid); sb_s(&s, " thread "); sb_u(&s, (unsigned long)tid); sb_s(&s, tid == mainTid ? " (the drawing thread)" : " (a worker)"); }
+#endif
+    sb_s(&s, "\n"); sb_put(&s, fileFd);
 #if defined(__arm__) && defined(__linux__)
     { /* where: the version, the address, the code and its caller, the code addresses found on the stack (the calls
          that led there, for tools/getlogs.js to name), and where the app's own libraries were loaded */
-      ucontext_t *u = uc; char b[600]; int n = snprintf(b, sizeof b, "[crash] version %s build %.12s addr %p pc %p lr %p\n", crashVer, buildId + 10, si ? si->si_addr : NULL, (void *)u->uc_mcontext.arm_pc, (void *)u->uc_mcontext.arm_lr); if (n > 0) write_all(fileFd, b, (size_t)n);
+      ucontext_t *u = uc;
+      sb_s(&s, "[crash] version "); sb_s(&s, crashVer); sb_s(&s, " build "); { char bi[13]; memcpy(bi, buildId + 10, 12); bi[12] = 0; sb_s(&s, bi); }
+      sb_s(&s, " addr 0x"); sb_x(&s, (unsigned long)(si ? si->si_addr : NULL)); sb_s(&s, " pc 0x"); sb_x(&s, (unsigned long)u->uc_mcontext.arm_pc); sb_s(&s, " lr 0x"); sb_x(&s, (unsigned long)u->uc_mcontext.arm_lr);
+      sb_s(&s, " sp 0x"); sb_x(&s, (unsigned long)u->uc_mcontext.arm_sp); sb_s(&s, "\n"); sb_put(&s, fileFd);
       extern char __executable_start[], etext[]; unsigned long lo = (unsigned long)__executable_start, hi = (unsigned long)etext;
-      const unsigned long *sp = (const unsigned long *)u->uc_mcontext.arm_sp; int k2 = snprintf(b, sizeof b, "[crash] stack"), got = 0;
-      for (int w = 0; w < 256 && got < 24 && k2 < (int)sizeof b - 12; w++) { unsigned long v = sp[w]; if (v >= lo && v < hi && (v & 1) == 0) { k2 += snprintf(b + k2, sizeof b - k2, " %lx", v); got++; } }
-      b[k2++] = '\n'; write_all(fileFd, b, (size_t)k2);
+      const unsigned long *sp = (const unsigned long *)u->uc_mcontext.arm_sp; int got = 0; sb_s(&s, "[crash] stack");
+      for (int w = 0; w < 256 && got < 24; w += 32) { if (!readable(sp + w, 32 * sizeof *sp)) break; /* (the end of its stack: no further) */
+        for (int k = w; k < w + 32 && got < 24; k++) { unsigned long v = sp[k]; if (v >= lo && v < hi && (v & 1) == 0) { sb_s(&s, " "); sb_x(&s, v); got++; } } }
+      sb_s(&s, "\n"); sb_put(&s, fileFd);
       int mf = open("/proc/self/maps", O_RDONLY); if (mf >= 0) { static char mb[4096]; static char ln[512]; size_t ll = 0; ssize_t r; /* line by line, the whole file */
         while ((r = read(mf, mb, sizeof mb)) > 0) for (ssize_t q = 0; q < r; q++) {
           if (mb[q] != '\n') { if (ll < sizeof ln - 1) ln[ll++] = mb[q]; continue; }
@@ -159,8 +182,13 @@ void applog_start(const char *dataDir) {
   for (size_t i = 0; i < sizeof SIGS / sizeof SIGS[0]; i++) {
     struct sigaction o; sigaction(SIGS[i], NULL, &o); oldAct[i] = o;
     if (SIGS[i] == SIGALRM && !(o.sa_flags & SA_SIGINFO) && (o.sa_handler == SIG_DFL || o.sa_handler == SIG_IGN)) continue; /* nobody listens for it */
-    struct sigaction a; memset(&a, 0, sizeof a); a.sa_sigaction = on_signal; a.sa_flags = SA_SIGINFO; sigemptyset(&a.sa_mask); sigaction(SIGS[i], &a, NULL);
+    struct sigaction a; memset(&a, 0, sizeof a); a.sa_sigaction = on_signal; a.sa_flags = SA_SIGINFO | SA_ONSTACK; sigemptyset(&a.sa_mask); sigaction(SIGS[i], &a, NULL);
   }
+  { int pp[2]; if (!pipe(pp)) { probeR = pp[0]; probeW = pp[1]; for (int k = 0; k < 2; k++) { fcntl(pp[k], F_SETFD, FD_CLOEXEC); fcntl(pp[k], F_SETFL, fcntl(pp[k], F_GETFL) | O_NONBLOCK); } } }
+  { static char alt[64 * 1024]; stack_t ss; memset(&ss, 0, sizeof ss); ss.ss_sp = alt; ss.ss_size = sizeof alt; if (sigaltstack(&ss, NULL)) fprintf(stderr, "[log] no stack of its own for the crash report\n"); } /* (the main thread's: a stack overflow there still reports) */
+#ifdef SYS_gettid
+  mainTid = syscall(SYS_gettid);
+#endif
 #if defined(__SANITIZE_ADDRESS__) || defined(SB_ASAN_ON)
   __sanitizer_set_death_callback(on_asan_death);
 #endif

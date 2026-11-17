@@ -27,6 +27,14 @@ void   img_prefetch_pri(const char *url, int w, int h); /* ahead of the queue, a
 void   img_pump(void);                   /* uploads finished decodes; call per frame (bounded work) */
 void   img_frame(void);                  /* marks the frame (for eviction) */
 void   img_release_unused(int keepMb);   /* evicts least recently drawn textures over the budget */
+/* at a moment the screen changes a lot (a film covering the pages, the app at the back): the textures not drawn in the
+   last minAgeFrames frames go, least recently drawn first, until at most keepMb remain; pinned ones and anything drawn
+   more recently stay, and decoded pictures waiting to go up that nobody drew lately are dropped too. GL thread, between
+   frames. Returns the KB let go */
+long   img_trim(int keepMb, unsigned minAgeFrames);
+/* held (the app at the back): no picture starts loading (one asked for waits until the hold ends) and decodes that
+   finish meanwhile are dropped, not uploaded; what is in memory stays drawable */
+void   img_hold(int on);
 void   img_set_budget_mb(int mb);
 void   img_set_draw_scale(float s);      /* surface pixels per layout unit when below 1: pictures are decoded at the size really drawn */
 int    img_used_mb(void);

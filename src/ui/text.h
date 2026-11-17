@@ -28,6 +28,7 @@ void text_set_rtl(int rtl);      /* the UI direction: START/END alignment, base 
 int  text_rtl(void);
 void text_frame_begin(void);     /* resets the per-frame rasterising budget */
 void text_gc(void);              /* drops lines not drawn lately (call when a screen changes) */
+int  text_trim(unsigned minAgeFrames); /* drops the lines not drawn in the last minAgeFrames frames (a film covering the pages); how many went */
 
 /* the subtitles' own fonts (Settings > Subtitles > Font): TEXT_FACE(n) | weight draws in bundled font n (1..TEXT_NFACES)
    where it has the letters, the app's own fonts elsewhere. 0: the app's own (Inter, Noto Sans Arabic) */

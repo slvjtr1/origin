@@ -6,6 +6,7 @@
 #include "core/store.h"
 #include "core/i18n.h"
 #include "core/usb.h"
+#include "core/p2pdirs.h"
 #include "core/memctl.h"
 #include <SDL2/SDL.h>
 #include <dlfcn.h>
@@ -52,7 +53,8 @@ static int engState; /* written by the start/stop threads: atomics below */
 #define ENG_SET(v) __atomic_store_n(&engState, (v), __ATOMIC_RELEASE)
 static int cleaning; /* the start-up sweep of left-overs is running */
 static char engErr[128];
-static char stateDir[1024], cacheDir[1024];
+static char stateDir[1024], cacheDir[1024]; /* cacheDir: written by the start thread before ENG_ON and by the main thread while ON; read by the stop thread only through its own copy */
+static int stoppedNote; /* atomics: the stop thread finished (p2p_pump hands the memory back) */
 static double idleSince; /* seconds: the engine stops some minutes after the last torrent went */
 
 /* what the TV has, read when the engine starts, and what was chosen from it */
@@ -97,12 +99,6 @@ static int load(void) {
 }
 int p2p_available(void) { if (E) return 1; char p[1200]; lib_path(p, sizeof p); return access(p, R_OK) == 0; }
 
-static void rm_tree(const char *dir) {
-  DIR *d = opendir(dir); if (!d) return; struct dirent *e; char p[1400];
-  while ((e = readdir(d))) { if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue; snprintf(p, sizeof p, "%s/%s", dir, e->d_name);
-    struct stat st; if (lstat(p, &st)) continue; if (S_ISDIR(st.st_mode)) { rm_tree(p); rmdir(p); } else unlink(p); }
-  closedir(d);
-}
 static long free_mb(const char *dir) { struct statvfs v; if (statvfs(dir, &v)) return -1; return (long)((unsigned long long)v.f_bavail * v.f_frsize / MB); }
 
 /* the candidate folders (SB_P2P_FLASH / SB_P2P_TMP point them elsewhere for tests: a tiny disk image, a full folder) */
@@ -110,7 +106,7 @@ static void flash_root(char *o, size_t n) { const char *e = getenv("SB_P2P_FLASH
 #ifndef SB_APP_ID
 #define SB_APP_ID "tv.stremioorigin.app"
 #endif
-static void usb_root(char *o, size_t n, const char *mnt) { snprintf(o, n, "%s/%s-engine", mnt, SB_APP_ID); }
+static void usb_root(char *o, size_t n, const char *mnt) { usb_engine_dir(mnt, o, n); } /* (the folder the USB check also tried) */
 /* /tmp and /dev/shm are shared by every app on the TV: a folder per app, and per user when one of that name belongs
    to someone else (a second install, a left-over of a run as root) */
 static void tmp_root(char *o, size_t n, int shm) {
@@ -176,7 +172,7 @@ static void choose_profile(Prof *P) {
   P->wmax = P->tier == 0 ? 256 : P->tier == 1 ? 384 : P->memFree >= 1024 ? 768 : 512; /* (a large TV with a gigabyte free: room for a remux's 40 s) */
   /* a USB drive switched on for it comes first: 70 % of its free room, the whole film up to 8 GB */
   UsbDrive d; char ur[1024];
-  if (usb_cache_on(&d)) { usb_root(ur, sizeof ur, d.mnt); mkdir(ur, 0755); struct stat st;
+  if (usb_cache_on(&d)) { usb_root(ur, sizeof ur, d.mnt); p2pdirs_sweep_old(ur); mkdir(ur, 0755); struct stat st;
     long uf = free_mb(d.mnt), bud = uf * 7 / 10; if (bud > W_USB_MAX) bud = W_USB_MAX;
     if (!stat(ur, &st) && S_ISDIR(st.st_mode) && !access(ur, W_OK) && bud >= W_GOOD) {
       P->loc = LOC_USB; snprintf(P->root, sizeof P->root, "%s", ur); P->budget = bud; P->reserve = uf - bud; P->wmax = W_USB_MAX;
@@ -190,7 +186,8 @@ static void choose_profile(Prof *P) {
   int fOk = usable_dir(fr); long fFree = fOk ? free_mb(fr) : -1, fRes = flash_reserve(), fBud = fFree < 0 ? -1 : fFree - fRes;
   const char *ram = NULL; int rKind = LOC_RAM; long rFree = -1, rRes = 0, rBud = -1;
   if (usable_dir(tr)) ram = tr; else if (usable_dir(sr)) ram = sr;
-  if (ram) { if (is_tmpfs(ram)) { rFree = ram_free_now(ram); rRes = ram_reserve(P); } else { rKind = LOC_DISK; rFree = free_mb(ram); rRes = keep_override() >= 0 ? keep_override() : 32; } rBud = rFree < 0 ? -1 : rFree - rRes; }
+  if (ram) { if (is_tmpfs(ram)) { rFree = ram_free_now(ram); rRes = ram_reserve(P); } else { rKind = LOC_DISK; rFree = free_mb(ram); rRes = keep_override() >= 0 ? keep_override() : 32; } rBud = rFree < 0 ? -1 : rFree - rRes;
+    if (rKind == LOC_RAM && rBud > rFree * 6 / 10 && keep_override() < 0) rBud = rFree * 6 / 10; } /* the TV's memory is never all the window's: its keyboard, its media services and the other apps keep at least 40 % of what is free */
   int pick; /* 0 flash, 1 ram */
   if (fOk && fBud >= W_GOOD) pick = 0;
   else if (ram && rBud >= W_GOOD) pick = 1;
@@ -247,9 +244,9 @@ static uint64_t upload_bps(void) { return (PF.tier == 0 ? 512 : PF.tier == 1 ? 1
 
 static void *engine_start(void *a) { plat_thread_background(5); (void)a; /* libtorrent's threads start from here and keep the lower priority */
   choose_profile(&PF);
-  snprintf(cacheDir, sizeof cacheDir, "%s", PF.root);
+  snprintf(cacheDir, sizeof cacheDir, "%s", PF.root); p2pdirs_set_live(cacheDir); /* (taken out of the retired ones if it was there) */
   snprintf(stateDir, sizeof stateDir, "%s/cache/engine-state", store_data_dir());
-  rm_tree(cacheDir); mkdir(cacheDir, 0755); { char c[1100]; snprintf(c, sizeof c, "%s/cache", store_data_dir()); mkdir(c, 0755); } mkdir(stateDir, 0755); /* the DHT table stays between runs */
+  p2pdirs_rm_tree(cacheDir); mkdir(cacheDir, 0755); { char c[1100]; snprintf(c, sizeof c, "%s/cache", store_data_dir()); mkdir(c, 0755); } mkdir(stateDir, 0755); /* the DHT table stays between runs */
   int r = E->start(stateDir, cacheDir, (uint64_t)PF.window * MB, upload_bps(), mem_cache_bytes(), (uint64_t)PF.seg * MB);
   if (r) { snprintf(engErr, sizeof engErr, "%s", E->error(NULL)); ENG_SET(ENG_FAILED); return NULL; }
   apply_memory_settings();
@@ -258,21 +255,25 @@ static void *engine_start(void *a) { plat_thread_background(5); (void)a; /* libt
   ENG_SET(ENG_ON);
   return NULL;
 }
-static void *engine_stop(void *a) { (void)a; E->stop(); rm_tree(cacheDir); rmdir(cacheDir); ENG_SET(ENG_OFF); return NULL; }
+/* the engine stops on a thread of its own: E->stop ends its threads (nothing writes into its folders after it returns),
+   then its folder and every folder it left behind go; only then is it OFF, so no new engine starts meanwhile */
+static void *engine_stop(void *a) { char *dir = a; plat_thread_background(10); Uint32 t0 = SDL_GetTicks();
+  E->stop(); unsigned ms = SDL_GetTicks() - t0;
+  int n = p2pdirs_stopped(dir); free(dir);
+  fprintf(stderr, "[p2p] engine stopped in %u ms, %d folder(s) of its buffer removed\n", ms, n);
+  __atomic_store_n(&stoppedNote, 1, __ATOMIC_RELEASE); ENG_SET(ENG_OFF); return NULL; }
 /* left-overs of a run that did not end well (a crash, the TV switched off): in RAM they would hold memory until the
    TV restarts. Swept once at start, on a thread */
 static void *sweep(void *a) { (void)a; plat_thread_background(15);
-  char p[1024]; flash_root(p, sizeof p); rm_tree(p); tmp_root(p, sizeof p, 0); rm_tree(p); rmdir(p); tmp_root(p, sizeof p, 1); rm_tree(p); rmdir(p);
+  char p[1024]; flash_root(p, sizeof p); p2pdirs_rm_tree(p); p2pdirs_sweep_old(p); tmp_root(p, sizeof p, 0); p2pdirs_rm_tree(p); rmdir(p); p2pdirs_sweep_old(p); tmp_root(p, sizeof p, 1); p2pdirs_rm_tree(p); rmdir(p); p2pdirs_sweep_old(p);
   for (int i = 0; i < 2; i++) { struct stat st; const char *old = i ? "/dev/shm/sb-engine" : "/tmp/sb-engine"; /* the shared name earlier versions used, when it is ours */
-    if (!lstat(old, &st) && S_ISDIR(st.st_mode) && st.st_uid == geteuid()) { rm_tree(old); rmdir(old); } }
+    if (!lstat(old, &st) && S_ISDIR(st.st_mode) && st.st_uid == geteuid()) { p2pdirs_rm_tree(old); rmdir(old); } }
   __atomic_store_n(&cleaning, 0, __ATOMIC_RELEASE); return NULL; }
 /* ---- the window changes place while the engine runs: the USB drive went or was switched off (at once, even mid-film:
    the engine downloads again in the next place and the stream keeps its address), or one was switched on (between
    films only). The choice probes the places, so it is made on a thread; p2p_pump applies it. ---- */
 static int engRun, relocRun;
 static void *reloc_thread(void *a) { (void)a; plat_thread_background(10); choose_profile(&relocTo); __atomic_store_n(&relocReady, 1, __ATOMIC_RELEASE); return NULL; }
-static void *rm_later(void *a) { plat_thread_background(15); char *d = a; SDL_Delay(5000); /* writes queued for the old place end first */
-  if (strcmp(d, cacheDir)) { rm_tree(d); rmdir(d); } free(d); return NULL; }
 static void watch_usb(double t) {
   if (!E || ENG() != ENG_ON) return;
   if (relocating) {
@@ -281,10 +282,12 @@ static void watch_usb(double t) {
     if (relocRun != engRun || !strcmp(relocTo.root, PF.root)) return; /* worked out for an engine that stopped since, or no change */
     Prof n = relocTo; n.target = want_for(&n, A.bps, A.size); n.window = clamp_in(&n, n.target, n.budget); n.lowStorage = n.flashShort || n.window < n.target;
     if (E->relocate(n.root, (uint64_t)n.seg * MB)) { fprintf(stderr, "[p2p] window could not move to %s\n", n.root); return; }
-    char *old = strdup(PF.root); int was = PF.loc; long ww = PF.window;
+    char old[1024]; snprintf(old, sizeof old, "%s", PF.root); int was = PF.loc; long ww = PF.window;
     PF = n; snprintf(cacheDir, sizeof cacheDir, "%s", PF.root); E->window((uint64_t)PF.window * MB); A.lastWatch = 0; relocAt = now_s();
+    /* the move is queued in the engine and done on its thread: the old folder may still be written for a moment. It is
+       retired, not removed: removed when the engine has stopped (or at the next start), unless it is in use again by then */
+    p2pdirs_set_live(PF.root); p2pdirs_retire(old);
     fprintf(stderr, "[p2p] window moved from %s to %s (%s), %ld -> %ld MB%s\n", loc_name(was), loc_name(PF.loc), PF.root, ww, PF.window, A.ih[0] ? ", while playing" : "");
-    pthread_t th; if (old && !pthread_create(&th, NULL, rm_later, old)) pthread_detach(th); else free(old);
     return; }
   unsigned s = usb_serial(); if (s == relocSerial && t < relocLook) return; relocSerial = s; relocLook = t + 1;
   UsbDrive d; int want = usb_cache_on(&d);
@@ -396,6 +399,7 @@ static void watch_room(double t) {
   if (PF.loc == LOC_RAM) fr -= resident; /* the Mac's stand-in free memory (SB_MEMFREE) does not shrink as the window fills; a TV's does */
 #endif
   long room = fr + resident - PF.reserve;
+  if (PF.loc == LOC_RAM && keep_override() < 0 && room > (fr + resident) * 6 / 10) room = (fr + resident) * 6 / 10; /* (as at the start: 40 % of what is free stays free) */
   if (t - A.lastReport >= 30) { A.lastReport = t; /* for the TV's log: is the window holding, and how does the engine fare */
     fprintf(stderr, "[p2p] buffer: %ld MB in %s (window %ld MB, freed %llu MB, refetched %llu pieces), %ld MB free there, %u peers, %.1f MB/s, engine cache %llu MB%s\n", resident, loc_name(PF.loc), PF.window,
       (unsigned long long)(st.freed / MB), (unsigned long long)st.refetched, fr, st.peers, A.rate / 1e6, (unsigned long long)(st.mem_cache_used / MB), st.window_unsupported ? ", STORAGE CANNOT FREE PIECES" : ""); }
@@ -457,11 +461,11 @@ void p2p_shutdown(void) {
   usb_shutdown();
   if (!E) return;
   for (int i = 0; i < 300 && (ENG() == ENG_STARTING || ENG() == ENG_STOPPING); i++) SDL_Delay(10); /* a start or stop under way ends first (3 s at most) */
-  if (ENG() == ENG_ON) { Uint32 t0 = SDL_GetTicks(); E->remove_all(); /* no torrent state left behind */ E->stop(); rm_tree(cacheDir); rmdir(cacheDir); ENG_SET(ENG_OFF); fprintf(stderr, "[p2p] engine stopped at exit in %u ms\n", SDL_GetTicks() - t0); }
+  if (ENG() == ENG_ON) { Uint32 t0 = SDL_GetTicks(); E->remove_all(); /* no torrent state left behind */ E->stop(); int n = p2pdirs_stopped(cacheDir); ENG_SET(ENG_OFF); fprintf(stderr, "[p2p] engine stopped at exit in %u ms, %d folder(s) removed\n", SDL_GetTicks() - t0, n); }
 }
 void p2p_player_closed(void) {
   if (R.on) p2p_cancel();
-  if (E && ENG() == ENG_ON) E->remove_all(); /* the engine deletes each torrent's payload with it */
+  if (E && ENG() == ENG_ON) E->remove_all(); /* queued: the engine deletes each torrent's payload on its own thread a moment later; its own memory goes when it stops (idle_limit) */
   memset(&A, 0, sizeof A); idleSince = now_s();
 }
 void p2p_pump(void) {
@@ -472,7 +476,10 @@ void p2p_pump(void) {
     if (t - A.lastT >= 1.0) { sbe_stats st; if (!E->stats(&st)) { if (A.lastT > 0 && st.downloaded >= A.lastBytes) { double r = (double)(st.downloaded - A.lastBytes) / (t - A.lastT); A.rate = A.rate * 0.6 + r * 0.4; } A.lastBytes = st.downloaded; } A.lastT = t; }
     if (A.ih[0]) watch_room(t); }
   watch_usb(t);
-  if (!R.on) { if (E && es == ENG_ON && !A.ih[0] && idleSince > 0 && t - idleSince > idle_limit()) { ENG_SET(ENG_STOPPING); pthread_t th; if (!pthread_create(&th, NULL, engine_stop, NULL)) pthread_detach(th); else ENG_SET(ENG_ON); idleSince = 0; mem_trim_soon(5, "the torrent engine stopped"); fprintf(stderr, "[p2p] engine stopped after %.0f idle seconds\n", idle_limit()); } return; }
+  if (__atomic_exchange_n(&stoppedNote, 0, __ATOMIC_ACQ_REL)) mem_trim_soon(0.5, "the torrent engine stopped"); /* (once its threads are gone: what they held is free now) */
+  if (!R.on) { if (E && es == ENG_ON && !A.ih[0] && idleSince > 0 && t - idleSince > idle_limit()) { char *dir = strdup(cacheDir); ENG_SET(ENG_STOPPING); pthread_t th;
+      if (dir && !pthread_create(&th, NULL, engine_stop, dir)) { pthread_detach(th); fprintf(stderr, "[p2p] engine stopping after %.0f idle seconds\n", idle_limit()); } else { free(dir); ENG_SET(ENG_ON); }
+      idleSince = 0; } return; }
   if (es == ENG_OFF) { if (ensure_engine()) { fail(T("Couldn’t start the torrent engine")); return; } }
   if (es == ENG_FAILED) { fprintf(stderr, "[p2p] engine failed: %s\n", engErr); ENG_SET(ENG_OFF); fail(T("Couldn’t start the torrent engine")); return; }
   if (es != ENG_ON) { snprintf(R.status, sizeof R.status, "%s", p2p_wait_reason(1)); return; }

@@ -489,6 +489,9 @@ static void cache_evict(void) { /* the least recently drawn line goes */
   if (at >= 0) cache_drop(at);
 }
 void text_gc(void) { for (int i = 0; i < CACHE_N; i++) if (cache[i].used && frameNo - cache[i].lastUse > 600) cache_drop(i); }
+int text_trim(unsigned minAgeFrames) { /* (a drop moves the entries after it back: looked over again until a pass drops nothing) */
+  int n = 0; for (int pass = 0; pass < 4; pass++) { int k = 0; for (int i = 0; i < CACHE_N; i++) if (cache[i].used && frameNo - cache[i].lastUse >= minAgeFrames) { cache_drop(i); k++; } n += k; if (!k) break; }
+  return n; }
 
 /* rasterises shaped glyphs into an alpha bitmap and uploads it */
 /* a colour glyph (CBDT / sbix PNG) as an alpha mask: coverage times a little of its brightness, so the drawing

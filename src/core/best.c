@@ -488,8 +488,9 @@ static void decide(int force) {
 static void on_part(StreamGroup *g, int gi, void *ud) {
   (void)gi;
   if (F.on && !F.fin && (unsigned)(uintptr_t)ud == F.tok) {
-    if (F.n + g->n > F.cap) { F.cap = (F.n + g->n) * 2; F.all = realloc(F.all, F.cap * sizeof *F.all); }
-    memcpy(F.all + F.n, g->items, g->n * sizeof *g->items); F.n += g->n; say(); decide(0);
+    if (F.n + g->n > F.cap) { int nc = (F.n + g->n) * 2; Stream *na = realloc(F.all, (size_t)nc * sizeof *F.all); if (na) { F.all = na; F.cap = nc; } }
+    if (F.n + g->n <= F.cap) { memcpy(F.all + F.n, g->items, g->n * sizeof *g->items); F.n += g->n; } else fprintf(stderr, "[best] no memory for %d more source(s): picked from %d\n", g->n, F.n);
+    say(); decide(0);
   }
   free(g->items); /* the part's streams belong to whoever receives them */
 }

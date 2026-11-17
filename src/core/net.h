@@ -5,8 +5,10 @@
 #define SB_NET_H
 #include <stddef.h>
 
-/* status: HTTP status (200..), 0 = network failure, -1 = cancelled. body is NUL-terminated for
-   convenience (len excludes the NUL) and is freed after the callback returns. */
+/* status: HTTP status (200..), 0 = network failure (or the answer did not fit in memory), -1 = cancelled. body is
+   NUL-terminated for convenience (len excludes the NUL) and is freed after the callback returns.
+   Every request function returns its id, or 0 when it could not even be queued; a request that was given an id always
+   gets its callback once, on the main thread, from net_pump (never inside the call that made it). */
 typedef void (*NetCb)(int status, const unsigned char *body, size_t len, void *ud);
 
 int      net_init(const char *caBundlePath);  /* caBundlePath may be NULL */
@@ -29,6 +31,10 @@ void     net_pump(void);           /* delivers finished requests; call once per 
 struct cJSON *net_json(const unsigned char *body);
 void     net_json_free(struct cJSON *j);   /* a parsed answer freed off the drawing thread */
 int      net_pending(void);
+/* what the answers hold now (their buffers, by capacity, and their parsed trees, by estimate, from the first byte until
+   the callback has returned), the most they held, the budget, and how many answers were refused for want of room */
+void     net_mem_stats(size_t *used, size_t *peak, size_t *budget, unsigned *refused);
+void     net_mem_set_budget(size_t bytes);   /* tests: 0 puts the TV's own budget back */
 /* synchronous fetch for worker threads of other modules (images); returns malloc'd body or NULL */
 unsigned char *net_fetch_sync(const char *url, size_t *len, int *status, int timeoutMs);
 /* the same with one extra request header ("Authorization: Bearer ..."), NULL for none */

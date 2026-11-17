@@ -11,6 +11,7 @@
 #include "core/hit.h"
 #include "core/i18n.h"
 #include "core/store.h"
+#include "core/usbcheck.h"
 #include "platform/plat.h"
 #include <SDL2/SDL.h>
 #include <fcntl.h>
@@ -26,58 +27,37 @@
 #define ROW_H 58.0f
 #define BW 240.0f
 #define BH 68.0f
-#define FAST_MBS 15.0f   /* at or over: a fast drive */
-#define OK_MBS 4.0f      /* under: too slow to help (the TV's own storage does better) */
-#define GIVE_UP_S 12.0   /* a drive that does not answer by then is left alone */
+#define GIVE_UP_S 12.0   /* the card waits this long for the check, then leaves the drive off (see below) */
 
 enum { PR_NONE, PR_FAST, PR_OKAY, PR_SLOW, PR_FAIL };
-/* the check, on its own thread: what it found is read by the main thread through the lock */
-typedef struct { char mnt[512]; int stage, res, done, dropped, failRow; float mbs; } Job;
+/* The check runs on a thread of its own (core/usbcheck.c does the work). The main thread owns the card and the store;
+   the thread only reports through the job, under the lock. At most one check thread lives at a time, an abandoned one
+   included: a drive that stops answering can hold its thread inside the kernel (a write cannot be called back), and no
+   second check starts until it has come out. The 12 s deadline is the card's: it gives up waiting and says so, it asks
+   the thread to stop at its next step, and it cannot promise the thread has stopped by then. */
+typedef struct { UsbCheck c; char id[96]; unsigned gen; int dropped, exited; } Job; /* dropped: the main thread let go (the thread frees it); exited: the thread let go (the main thread frees it). Both under mu */
 static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
-static Job *job;
+static Job *job;         /* the check the card waits on (main thread) */
+static int alive;        /* check threads still running, waited on or abandoned (under mu) */
+static unsigned gen;     /* each card's own number: an answer for an earlier one is never used */
 
-static double mono(void) { return SDL_GetPerformanceCounter() / (double)SDL_GetPerformanceFrequency(); }
-static void set_stage(Job *j, int s) { pthread_mutex_lock(&mu); j->stage = s; pthread_mutex_unlock(&mu); }
 static void *check(void *a) {
   Job *j = a; plat_thread_background(5);
-  char p[640]; snprintf(p, sizeof p, "%s/.origin-check-%d", j->mnt, (int)getpid());
-  int res = PR_FAIL, failRow = 1; float mbs = 0;
-  SDL_Delay(600);                     /* (each step stays long enough to be read) */
-  set_stage(j, 1);
-  int fd = open(p, O_CREAT | O_TRUNC | O_WRONLY, 0600);
-  if (fd >= 0) { char b[4096]; memset(b, 0x5a, sizeof b); int ok = write(fd, b, sizeof b) == (ssize_t)sizeof b && !fsync(fd); close(fd);
-    if (ok) { SDL_Delay(500); set_stage(j, 2); failRow = 2;
-      /* its speed: 2 MB at a time, each written through to the drive, for 3 s or 32 MB */
-      enum { CH = 2 * 1024 * 1024 }; unsigned char *buf = malloc(CH);
-#ifdef O_DSYNC
-      fd = buf ? open(p, O_TRUNC | O_WRONLY | O_DSYNC) : -1;
-#else
-      fd = buf ? open(p, O_TRUNC | O_WRONLY) : -1;
-#endif
-      if (fd >= 0) { unsigned x = 2463534242u; for (int i = 0; i < CH; i++) { x ^= x << 13; x ^= x >> 17; x ^= x << 5; buf[i] = (unsigned char)x; }
-        double t0 = mono(), el = 0; int n = 0, bad = 0;
-        while (n < 16 && el < 3.0) { ssize_t w = write(fd, buf, CH); if (w != CH) { bad = 1; break; }
-#ifndef O_DSYNC
-          fsync(fd);
-#endif
-          n++; el = mono() - t0; }
-        close(fd);
-        if (!bad && n > 0 && el > 0) { mbs = (float)(n * 2 / el); res = mbs >= FAST_MBS ? PR_FAST : mbs >= OK_MBS ? PR_OKAY : PR_SLOW; } }
-      free(buf); } }
-  unlink(p);
-  fprintf(stderr, "[usb] check of %s: %s, %.1f MB/s written\n", j->mnt, res == PR_FAIL ? "cannot be written" : res == PR_SLOW ? "too slow" : res == PR_OKAY ? "works" : "fast", mbs);
-  pthread_mutex_lock(&mu); j->mbs = mbs; j->res = res; j->failRow = failRow; j->stage = 3; j->done = 1; int drop = j->dropped; pthread_mutex_unlock(&mu);
+  usbcheck_run(&j->c, &mu);
+  pthread_mutex_lock(&mu); j->exited = 1; int drop = j->dropped; alive--; pthread_mutex_unlock(&mu);
   if (drop) free(j);
   return NULL;
 }
-static void job_drop(void) { /* the main thread lets go of it: the thread frees it if it still runs */
-  if (!job) return; pthread_mutex_lock(&mu); int done = job->done; if (!done) job->dropped = 1; pthread_mutex_unlock(&mu);
-  if (done) free(job); job = NULL;
+static void job_drop(void) { /* the main thread lets go of it: asked to stop; the thread frees it when it comes out */
+  if (!job) return; usbcheck_cancel(&job->c);
+  pthread_mutex_lock(&mu); int gone = job->exited; if (!gone) job->dropped = 1; pthread_mutex_unlock(&mu);
+  if (gone) free(job); job = NULL;
 }
 
 static Screen card; static SGlass glass; static Screen *under;
 static struct {
-  int open, closing, shown;         /* shown: the card is up (Back hides it, the check goes on) */
+  int open, closing, shown;         /* shown: the card is up (Back or OK hides it, the check goes on) */
+  char id[96], mnt[512];            /* the drive it is for */
   int stage, res, failRow; float mbs; /* as last read from the job */
   double t0, stageAt[4], doneAt;    /* app_now() when it began, when each stage was reached, when the result came */
   char key[128], name[96], facts[160], head[160], sub[200];
@@ -86,7 +66,7 @@ static struct {
 static float quint(float x) { return 1 - powf(1 - x, 5); }
 static float card_h(void) { return PAD + 76 + 22 + text_line_height(36) + 8 + text_line_height(24) + 30 + 3 * ROW_H + 26 + text_line_height(28) + 6 + text_line_height(24) + 30 + BH + PAD; }
 
-int usbprep_busy(void) { return job != NULL; }
+int usbprep_busy(void) { pthread_mutex_lock(&mu); int a = alive; pthread_mutex_unlock(&mu); return job != NULL || a > 0; }
 static void hide(void) { if (!U.shown || U.closing) return; U.closing = 1; timer_start(&U.out, 0.2f); }
 static void hidden(void) { U.shown = 0; U.closing = 0; if (app_overlay == &card) app_overlay = under; under = NULL; sglass_free(&glass); if (!job) U.open = 0; }
 
@@ -99,26 +79,30 @@ static void result(void) {
     case PR_SLOW: snprintf(U.head, sizeof U.head, "%s", T("This drive is too slow for torrents")); snprintf(U.sub, sizeof U.sub, "%s", T1("{n} MB/s. Left off: an SSD is recommended.", "n", v)); break;
     default:     snprintf(U.head, sizeof U.head, "%s", T("This drive cannot be used")); snprintf(U.sub, sizeof U.sub, "%s", T("It could not be written to. Left off.")); break; }
   int on = U.res == PR_FAST || U.res == PR_OKAY;
-  if (U.key[0]) store_set(U.key, on ? "true" : "false");
+  if (U.key[0]) {
+    UsbDrive d; int there = usb_drive(&d);
+    if (usbcheck_keep_answer(U.id, U.mnt, there, there ? d.id : NULL, there ? d.mnt : NULL, store_get(U.key, NULL))) store_set(U.key, on ? "true" : "false"); }
   U.doneAt = app_now();
   if (!U.shown) { toast(U.head, 3200, NULL); U.open = 0; } else if (on) sound_play(SND_TOGGLE);
 }
 void usbprep_pump(void) {
   if (!job) return;
-  pthread_mutex_lock(&mu); int st = job->stage, res = job->res, done = job->done, fr = job->failRow; float mbs = job->mbs; pthread_mutex_unlock(&mu);
+  { UsbDrive d; if (!usb_drive(&d) || strcmp(d.id, U.id) || strcmp(d.mnt, U.mnt)) { fprintf(stderr, "[usb] the drive went or changed during its check: stopped\n"); usbprep_gone(); return; } } /* (another drive in its place: never answered for this one) */
+  pthread_mutex_lock(&mu); int st = job->c.stage, res = job->c.res, done = job->c.done, fr = job->c.failRow; float mbs = job->c.mbs; unsigned g = job->gen; pthread_mutex_unlock(&mu);
   double t = app_now();
-  while (U.stage < st) { U.stage++; U.stageAt[U.stage] = t; }
-  if (done) { U.res = res; U.mbs = mbs; U.failRow = fr; job_drop(); result(); return; }
-  if (t - U.t0 > GIVE_UP_S) { fprintf(stderr, "[usb] check gave no answer in %.0f s: the drive is left off\n", GIVE_UP_S); U.failRow = U.stage >= 2 ? 2 : 1; U.stage = 3; U.stageAt[3] = t; U.res = PR_FAIL; U.mbs = 0; job_drop(); result(); }
+  while (U.stage < st && U.stage < 3) { U.stage++; U.stageAt[U.stage] = t; }
+  if (done) { job_drop(); if (g != gen) return; U.res = res == UC_FAST ? PR_FAST : res == UC_OKAY ? PR_OKAY : res == UC_SLOW ? PR_SLOW : PR_FAIL; U.mbs = mbs; U.failRow = fr; result(); return; }
+  if (t - U.t0 > GIVE_UP_S) { fprintf(stderr, "[usb] the check gave no answer in %.0f s: the drive is left off (the check is told to stop; a drive stuck inside the system may keep its thread until it answers)\n", GIVE_UP_S);
+    U.failRow = U.stage >= 2 ? 2 : 1; U.stage = 3; U.stageAt[3] = t; U.res = PR_FAIL; U.mbs = 0; job_drop(); result(); }
 }
 void usbprep_gone(void) {
   if (!U.open && !job) return;
-  job_drop(); if (U.shown) hide(); else U.open = 0;
+  job_drop(); gen++; if (U.shown) hide(); else U.open = 0;
 }
 
 static int key(int k) {
   if (U.closing) { hidden(); return 1; }
-  if (k == K_BACK || (k == K_OK && U.res != PR_NONE)) { if (k == K_OK) sound_play(SND_TOGGLE); hide(); }
+  if (k == K_BACK || k == K_OK) { if (k == K_OK) sound_play(SND_TOGGLE); hide(); } /* (OK presses the one button there is: Hide while it checks, OK after) */
   return 1; /* nothing under the card takes keys while it is up */
 }
 static void tick(float dt) {
@@ -172,22 +156,27 @@ static void draw(void) {
 }
 static Screen card = { NULL, NULL, key, tick, draw, NULL, NULL, NULL };
 
-void usbprep_show(const UsbDrive *d, const char *storeKey) {
-  if (!d || job) return;
+int usbprep_show(const UsbDrive *d, const char *storeKey) {
+  if (!d || usbprep_busy()) return 0; /* (an earlier check, even one given up on, is still out: asked again later) */
+  Job *j = calloc(1, sizeof *j); if (!j) return 0;
+  { char ed[600]; usb_engine_dir(d->mnt, ed, sizeof ed); usbcheck_init(&j->c, d->mnt, ed); } snprintf(j->id, sizeof j->id, "%s", d->id); j->gen = ++gen;
   if (U.shown) sglass_free(&glass); /* an earlier drive's result still up: this one takes the card */
-  Job *j = calloc(1, sizeof *j); if (!j) return; snprintf(j->mnt, sizeof j->mnt, "%s", d->mnt);
+  if (app_overlay == &card) { app_overlay = under; under = NULL; }
   memset(&U, 0, sizeof U); U.open = 1; U.shown = 1; U.t0 = U.stageAt[0] = app_now();
+  snprintf(U.id, sizeof U.id, "%s", d->id); snprintf(U.mnt, sizeof U.mnt, "%s", d->mnt);
   snprintf(U.key, sizeof U.key, "%s", storeKey ? storeKey : "");
   snprintf(U.name, sizeof U.name, "%s", d->name[0] ? d->name : T("USB drive"));
   { char gb[16]; snprintf(gb, sizeof gb, "%.*f", d->freeMb >= 10240 ? 0 : 1, d->freeMb / 1024.0);
     char fs[24]; snprintf(fs, sizeof fs, "%s", d->fs); for (char *p = fs; *p; p++) if (*p >= 'a' && *p <= 'z') *p -= 32;
     snprintf(U.facts, sizeof U.facts, "%s%s%s", T1("{n} GB free", "n", gb), fs[0] ? " \xc2\xb7 " : "", fs); }
   U.h = card_h();
+  pthread_mutex_lock(&mu); alive++; pthread_mutex_unlock(&mu);
   job = j; pthread_t th;
-  if (pthread_create(&th, NULL, check, j)) { job = NULL; free(j); U.open = U.shown = 0; return; }
+  if (pthread_create(&th, NULL, check, j)) { pthread_mutex_lock(&mu); alive--; pthread_mutex_unlock(&mu); job = NULL; free(j); U.open = U.shown = 0; fprintf(stderr, "[usb] no thread for the check: asked again later\n"); return 0; }
   pthread_detach(th);
   timer_start(&U.in, 0.3f);
   sglass_bake(&glass, SB_W / 2 - CW / 2, SB_H / 2 - U.h / 2, CW, U.h);
   if (app_overlay != &card) under = app_overlay; app_overlay = &card;
   fprintf(stderr, "[usb] new drive %s: checking it (the card is up)\n", d->mnt);
+  return 1;
 }

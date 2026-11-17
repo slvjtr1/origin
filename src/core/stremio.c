@@ -680,7 +680,7 @@ static void stream_subs_keep(const char *key, const cJSON *arr, const char *addo
 }
 int sb_stream_subs(const Stream *s, SubEntry **out) {
   *out = NULL; unsigned long long h = str_hash(s->url[0] ? s->url : s->ext);
-  for (int i = 0; i < 128; i++) if (ssubs[i].h == h && ssubs[i].n) { *out = malloc(ssubs[i].n * sizeof **out); memcpy(*out, ssubs[i].subs, ssubs[i].n * sizeof **out); return ssubs[i].n; }
+  for (int i = 0; i < 128; i++) if (ssubs[i].h == h && ssubs[i].n) { *out = malloc(ssubs[i].n * sizeof **out); if (!*out) return 0; memcpy(*out, ssubs[i].subs, ssubs[i].n * sizeof **out); return ssubs[i].n; }
   return 0;
 }
 static void hdr_lines(const cJSON *o, char *out, size_t cap) { /* {"User-Agent": "x"} -> "User-Agent: x\n" */
@@ -809,6 +809,7 @@ void sb_streams_raw_next(void) { rawNext = 1; }
 static void streams_clean(StreamGroup *g, StreamReq *r) {
   enum { V_OK, V_JUNK, V_EP, V_TITLE, V_OTHER, V_CAM, V_BAD };
   unsigned char *v = calloc(g->n ? g->n : 1, 1); int n = 0, hit = 0, miss = 0, s1all = 1, thit = 0, tweak = 0, good = 0, out = 0, k = 0, super = r->clean >= 2;
+  if (!v) { fprintf(stderr, "[streams] %s: no memory to sort its %d source(s): listed as they came\n", g->name, g->n); return; }
   want_fill(r);
   for (int i = 0; i < g->n; i++) { Stream *x = &g->items[i]; if (x->ext[0] && !x->url[0]) continue;
     n++;
@@ -828,10 +829,16 @@ static void streams_clean(StreamGroup *g, StreamReq *r) {
   r->hidden += out; hidden_note(r);
   g->n = k; free(v);
 }
+/* the most sources kept from one addon: 40 for a list, 300 for the best-stream pick (it reads them all, as the web does:
+   a 4K-first addon lists its 1080p files late). A source is ~6.5 KB here: 300 are about 2 MB */
+#define STREAMS_LIST_MAX 40
+#define STREAMS_PICK_MAX 300
 static void streams_answer(StreamPart *p, const cJSON *arr) {
   StreamReq *r = p->req; const cJSON *s;
-  StreamGroup g; copy_str(g.name, sizeof g.name, p->name); int na = arr ? cJSON_GetArraySize(arr) : 0; if (!r->ans && na > 40) na = 40; /* the best-stream pick reads all of them, as the web does: a 4K-first addon lists its 1080p files late */
+  StreamGroup g; copy_str(g.name, sizeof g.name, p->name); int na = arr ? cJSON_GetArraySize(arr) : 0, mx = r->ans ? STREAMS_PICK_MAX : STREAMS_LIST_MAX;
+  if (na > mx) { if (r->ans) fprintf(stderr, "[streams] %s: %d sources, the first %d read\n", p->name, na, mx); na = mx; }
   g.items = calloc(na ? na : 1, sizeof(Stream)); g.n = 0;
+  if (!g.items) { fprintf(stderr, "[streams] %s: no memory for its %d source(s): left out\n", p->name, na); return; } /* (counted as an empty answer) */
   if (arr) cJSON_ArrayForEach(s, arr) { if (g.n >= na) break; if (stream_parse(&g.items[g.n], s, p->name)) g.n++; }
   if (r->clean) streams_clean(&g, r);
   r->total += g.n; if (g.n) r->part(&g, p->idx, r->ud); else free(g.items);
@@ -867,21 +874,29 @@ int sb_stream_addons(const char *type, const char *vid, char (*names)[96], int m
   return n;
 }
 /* only >= 0: that one of the addons serving the video (in the user's order), alone */
+/* every part and the request itself answer once each: parts from net_pump, the request's done after its last part (or at
+   once, inside this call, when nothing could be asked: no addon serves the video, or no memory for the request) */
 static unsigned streams_req(const char *type, const char *vid, int only, StreamPartCb part, StreamDoneCb done, StreamAnsCb ans, void *ud) {
-  cJSON *a = sb_addons(); StreamReq *r = calloc(1, sizeof *r); r->tok = ++streamTok; r->part = part; r->done = done; r->ans = ans; r->ud = ud;
+  cJSON *a = sb_addons(); StreamReq *r = calloc(1, sizeof *r);
+  if (!r) { fprintf(stderr, "[streams] no memory to ask for %s: none\n", vid ? vid : "?"); done(0, ud); return 0; }
+  r->tok = ++streamTok; if (!r->tok) r->tok = ++streamTok; r->part = part; r->done = done; r->ans = ans; r->ud = ud;
   r->clean = sb_clean_level(); if (rawNext) { r->clean = 0; rawNext = 0; } /* (asked once with everything the addons list) */
   r->series = type && !strcmp(type, "series"); if (r->series && !src_vid_episode(vid, &r->season, &r->episode)) r->season = r->episode = 0;
   copy_str(r->type, sizeof r->type, type ? type : ""); copy_str(r->vid, sizeof r->vid, vid ? vid : ""); { size_t l = strcspn(r->vid, ":"); if (l >= sizeof r->id) l = sizeof r->id - 1; memcpy(r->id, r->vid, l); r->id[l] = 0; }
   if (r->clean >= 2) sb_src_know(r->type, r->id);
   const cJSON *own = video_streams(type, vid);
   if (own && only > 0) own = NULL, a = NULL; /* (its own list is the one group) */
-  if (own) { r->own = cJSON_Duplicate(own, 1); StreamPart *p = calloc(1, sizeof *p); p->req = r; copy_str(p->name, sizeof p->name, T("This title")); r->pending = r->count = 1;
-    net_file("", on_own_streams, p); return r->tok; } /* (a file that is not there: answered on the next frame, never inside this call) */
+  if (own) { r->own = cJSON_Duplicate(own, 1); StreamPart *p = r->own ? calloc(1, sizeof *p) : NULL;
+    if (p) { p->req = r; copy_str(p->name, sizeof p->name, T("This title")); r->pending = r->count = 1;
+      if (net_file("", on_own_streams, p)) return r->tok; /* (a file that is not there: answered on the next frame, never inside this call) */
+      free(p); }
+    fprintf(stderr, "[streams] no memory for %s's own sources: none\n", r->vid); cJSON_Delete(r->own); free(r); done(0, ud); return 0; }
   int idx = 0; const cJSON *ad;
   if (a) cJSON_ArrayForEach(ad, a) { if (!addon_serves(ad, "stream", type, vid)) continue; if (only >= 0 && idx != only) { idx++; continue; }
-    StreamPart *p = calloc(1, sizeof *p); p->req = r; p->idx = idx++; copy_str(p->name, sizeof p->name, addon_name(ad));
+    StreamPart *p = calloc(1, sizeof *p); if (!p) { fprintf(stderr, "[streams] no memory to ask %s\n", addon_name(ad)); idx++; continue; }
+    p->req = r; p->idx = idx++; copy_str(p->name, sizeof p->name, addon_name(ad));
     char base[512], url[900]; addon_base(ad, base, sizeof base); addon_url(url, sizeof url, base, "stream", type, vid, NULL);
-    r->pending++; net_get_timeout(url, 45000, on_streams, p); } /* slow debrid addons can take 20-30 s: the phone and PC apps wait as long */
+    r->pending++; if (!net_get_timeout(url, 45000, on_streams, p)) { r->pending--; free(p); } } /* slow debrid addons can take 20-30 s: the phone and PC apps wait as long */
   r->count = r->pending; if (!r->pending) { done(0, ud); free(r); return 0; }
   return r->tok;
 }

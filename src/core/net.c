@@ -17,6 +17,7 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <sys/time.h>
+#include <time.h>
 #include <unistd.h>
 
 /* ---- the curl entry points, resolved at run time on the TV -------------------------------- */
@@ -71,33 +72,95 @@ static int resolve(void) {
 /* ---- requests ------------------------------------------------------------------------------- */
 typedef struct Req {
   unsigned id; char *url, *hdr, *post, *ctype, *method; size_t postLen; NetCb cb; void *ud; long timeoutMs; cJSON *json; /* postLen: a raw body (net_send), else post is text; json: the body already parsed on the worker */
-  int status; unsigned char *body; size_t len, cap; int cancelled, done;
+  int status; unsigned char *body; size_t len, cap; int cancelled, done; /* cancelled: written by net_cancel, read by its worker (atomics) */
+  size_t held, jsonHeld; int refused; /* held: what its body's buffer counts against the budget; jsonHeld: its parsed tree's estimate */
   int size; double total;  /* net_size: only the headers are read */
   int file;                /* net_file: url is a local path */
   struct Req *next;
 } Req;
 static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t cv = PTHREAD_COND_INITIALIZER;
-static Req *queue, *queueTail, *slowQ, *slowTail, *finished, *inflight[11], *fqueue, *fqueueTail;
-static pthread_cond_t slowCv = PTHREAD_COND_INITIALIZER;
-static pthread_cond_t fcv = PTHREAD_COND_INITIALIZER;
-static unsigned nextId = 1; static int npending;
 #define WORKERS 15  /* 0-4 take the quick requests (catalogs, details, the account); 5-14 the slow ones (stream addons, up to
                        45 s each): details never wait behind a debrid addon thinking */
 #define SLOW0 5
+/* (inflight has one place per worker: it once had 11 for 15 workers, and the 7th stream addon answering at once wrote
+   its request over the finished list and the next variables) */
+static Req *queue, *queueTail, *slowQ, *slowTail, *finished, *inflight[WORKERS], *fqueue, *fqueueTail;
+static pthread_cond_t slowCv = PTHREAD_COND_INITIALIZER;
+static pthread_cond_t fcv = PTHREAD_COND_INITIALIZER;
+static unsigned nextId = 1; static int npending;
+static int is_cancelled(const Req *r) { return __atomic_load_n(&r->cancelled, __ATOMIC_ACQUIRE); }
+static void set_cancelled(Req *r) { __atomic_store_n(&r->cancelled, 1, __ATOMIC_RELEASE); }
+
+/* ---- the memory answers hold ----------------------------------------------------------------------------------------
+   Every answer's buffer counts by its capacity from its first byte until its callback has returned (or, for the
+   synchronous calls of other modules' workers, until the call returns); a JSON answer parsed on the worker counts its
+   tree too, at an estimate, until it is handed over. Over the budget, a worker waits a short while for net_pump to hand
+   answers on and free them (it holds nothing the main thread needs meanwhile), then gives that answer up: the caller
+   sees a failure, never a stall. A request holding nothing yet may always take its first MB, so one answer is never
+   starved by the others (the budget is exceeded by at most that per worker). */
+#define NET_FIRST_FREE ((size_t)1 << 20)
+#define NET_MEM_WAIT_MS 3000
+#define JSON_GROWTH 6       /* a parsed cJSON tree is several times the size of its text */
+#define BODY_MAX_HARD ((size_t)32 << 20) /* one answer, whatever the budget: nothing the app reads this way comes near */
+static pthread_mutex_t memMu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t memCv = PTHREAD_COND_INITIALIZER;
+static size_t memUsed, memPeak, memBudget, memBudgetSet; static unsigned memRefused; static Uint32 lastGiveUp;
+#define NET_GIVE_UP_GAP_MS 300 /* waiters past their time give up one at a time: what one frees may be room for the next */
+static size_t mem_budget(void) { /* under memMu: a sixteenth of the TV's memory, 32 to 96 MB */
+  if (memBudgetSet) return memBudgetSet;
+  if (!memBudget) { int t = plat_mem_total_mb(); size_t b = t > 0 ? (size_t)t * 1024 * 1024 / 16 : (size_t)64 << 20; if (b < ((size_t)32 << 20)) b = (size_t)32 << 20; if (b > ((size_t)96 << 20)) b = (size_t)96 << 20; memBudget = b; }
+  return memBudget; }
+static size_t body_max(void) { pthread_mutex_lock(&memMu); size_t b = mem_budget() * 3 / 4; pthread_mutex_unlock(&memMu); return b < BODY_MAX_HARD ? b : BODY_MAX_HARD; }
+void net_mem_set_budget(size_t bytes) { pthread_mutex_lock(&memMu); memBudgetSet = bytes; memPeak = memUsed; pthread_cond_broadcast(&memCv); pthread_mutex_unlock(&memMu); }
+void net_mem_stats(size_t *used, size_t *peak, size_t *budget, unsigned *refused) {
+  pthread_mutex_lock(&memMu); if (used) *used = memUsed; if (peak) *peak = memPeak; if (budget) *budget = mem_budget(); if (refused) *refused = memRefused; pthread_mutex_unlock(&memMu); }
+/* n more bytes for r: 1 taken, 0 refused (no room within the wait, or r was cancelled). wait 0: never waits */
+static int mem_take(const Req *r, size_t heldNow, size_t n, int wait) {
+  if (!n) return 1;
+  pthread_mutex_lock(&memMu);
+  Uint32 t0 = SDL_GetTicks();
+  for (;;) {
+    size_t b = mem_budget();
+    if (memUsed + n <= b || heldNow + n <= NET_FIRST_FREE) break;
+    int cancelled = r && is_cancelled(r); Uint32 now = SDL_GetTicks();
+    if (!wait || cancelled || (now - t0 >= NET_MEM_WAIT_MS && now - lastGiveUp >= NET_GIVE_UP_GAP_MS)) { if (!cancelled && wait) lastGiveUp = now; memRefused++; pthread_mutex_unlock(&memMu); return 0; }
+    struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts); ts.tv_nsec += 100 * 1000000L; if (ts.tv_nsec >= 1000000000L) { ts.tv_sec++; ts.tv_nsec -= 1000000000L; }
+    pthread_cond_timedwait(&memCv, &memMu, &ts); /* (in short steps: a cancel is seen within 0.1 s) */
+  }
+  memUsed += n; if (memUsed > memPeak) memPeak = memUsed;
+  pthread_mutex_unlock(&memMu); return 1;
+}
+static void mem_give(size_t n) { if (!n) return; pthread_mutex_lock(&memMu); memUsed = n > memUsed ? 0 : memUsed - n; pthread_cond_broadcast(&memCv); pthread_mutex_unlock(&memMu); }
+
+/* a request that could not even be made (no memory for it): its callback still comes, from net_pump, with 0 */
+typedef struct { unsigned id; NetCb cb; void *ud; } Failed;
+static Failed failQ[64]; static int nfail;
+static unsigned fail_later(NetCb cb, void *ud) { /* under no lock */
+  pthread_mutex_lock(&mu); unsigned id = 0;
+  if (nfail < (int)(sizeof failQ / sizeof *failQ)) { id = nextId++; if (!id) id = nextId++; failQ[nfail].id = id; failQ[nfail].cb = cb; failQ[nfail].ud = ud; nfail++; npending++; }
+  pthread_mutex_unlock(&mu);
+  fprintf(stderr, "[net] no memory for a request%s\n", id ? ": it fails" : " (and none to say so)");
+  return id;
+}
+static void req_free(Req *r) { if (!r) return; free(r->url); free(r->hdr); free(r->post); free(r->ctype); free(r->method); free(r->body); free(r); }
 
 /* an address or a redirect never leaves the web (no file://, ftp://, gopher://... whatever an addon answers), and an
    answer kept in memory has an end: nothing the app reads this way is near it, and a TV has little to spare */
 #define WEB_ONLY ((long)(CURLPROTO_HTTP | CURLPROTO_HTTPS))
-#define BODY_MAX ((size_t)48 << 20)
 static size_t on_data(char *p, size_t s, size_t n, void *ud) {
   Req *r = ud; size_t add = s * n;
-  if (r->cancelled) return 0;
-  if (r->len + add > BODY_MAX) { fprintf(stderr, "[net] an answer past %u MB is not read on\n", (unsigned)(BODY_MAX >> 20)); return 0; }
-  if (r->len + add + 1 > r->cap) { size_t nc = (r->len + add + 1) * 2; unsigned char *nb = realloc(r->body, nc); if (!nb) return 0; r->body = (void *)nb; r->cap = nc; }
+  if (is_cancelled(r)) return 0;
+  size_t mx = body_max();
+  if (r->len + add > mx) { if (!r->refused) fprintf(stderr, "[net] an answer past %u MB is not read on\n", (unsigned)(mx >> 20)); r->refused = 1; return 0; }
+  if (r->len + add + 1 > r->cap) {
+    size_t need = r->len + add + 1, nc = need < ((size_t)4 << 20) ? need * 2 : need + need / 2; /* (doubling while small, then half again: less slack in a big one) */
+    if (nc > mx + 1) nc = mx + 1; if (nc < need) nc = need;
+    if (!mem_take(r, r->held, nc - r->cap, 1)) { if (!r->refused) fprintf(stderr, "[net] no room for an answer of %u KB (the answers in hand hold their budget): given up\n", (unsigned)((r->len + add) >> 10)); r->refused = 1; return 0; }
+    unsigned char *nb = realloc(r->body, nc); if (!nb) { mem_give(nc - r->cap); r->refused = 1; return 0; }
+    r->held += nc - r->cap; r->body = nb; r->cap = nc; }
   memcpy(r->body + r->len, p, add); r->len += add; r->body[r->len] = 0; return add;
 }
-static int on_progress(void *ud, curl_off_t dt, curl_off_t dn, curl_off_t ut, curl_off_t un) { (void)dt; (void)dn; (void)ut; (void)un; return ((Req *)ud)->cancelled; }
+static int on_progress(void *ud, curl_off_t dt, curl_off_t dn, curl_off_t ut, curl_off_t un) { (void)dt; (void)dn; (void)ut; (void)un; return is_cancelled((Req *)ud); }
 /* net_size: "Content-Range: bytes 0-0/<total>" (a 200 instead: its Content-Length); each redirect starts over */
 static size_t on_header(char *p, size_t s, size_t n, void *ud) {
   Req *r = ud; size_t len = s * n; char h[256]; size_t k = len < sizeof h - 1 ? len : sizeof h - 1; memcpy(h, p, k); h[k] = 0;
@@ -157,11 +220,16 @@ static void perform(Req *r, int slot) {
   CURLcode rc = f_easy_perform(c);
   long code = 0; f_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
   r->status = rc == CURLE_OK ? (int)code : 0;
-  if (r->size) { char t[32]; int k = snprintf(t, sizeof t, "%.0f", r->total > 0 ? r->total : 0); free(r->body); r->body = (unsigned char *)strdup(t); r->len = (size_t)k; r->status = (int)code; } /* the server's answer even without a size (a 404 says why a film will not play); 0 = no answer */
+  if (r->size) { char t[32]; int k = snprintf(t, sizeof t, "%.0f", r->total > 0 ? r->total : 0); free(r->body); mem_give(r->held); r->held = 0; r->cap = 0; r->body = (unsigned char *)strdup(t); r->len = r->body ? (size_t)k : 0; r->status = (int)code; } /* the server's answer even without a size (a 404 says why a film will not play); 0 = no answer */
+  if (r->refused) r->status = 0; /* cut short for want of room: a failure, never half an answer */
   if (!kept) f_easy_cleanup(c); if (hs) f_slist_free_all(hs); if (pin) f_slist_free_all(pin);
 }
 static void parse_body(Req *r) {
-  if (r->body && r->len > 1 && r->len < 16u * 1024 * 1024 && r->status >= 200 && r->status < 300) { const unsigned char *b = r->body; while (*b == ' ' || *b == '\n' || *b == '\r' || *b == '\t') b++; if (*b == '{' || *b == '[') r->json = cJSON_ParseWithLength((const char *)r->body, r->len); }
+  if (r->body && r->len > 1 && r->len < 16u * 1024 * 1024 && r->status >= 200 && r->status < 300) { const unsigned char *b = r->body; while (*b == ' ' || *b == '\n' || *b == '\r' || *b == '\t') b++;
+    if (*b == '{' || *b == '[') { size_t est = r->len * JSON_GROWTH;
+      if (!mem_take(r, r->held, est, 0)) return; /* no room for the tree now: the callback parses it on the main thread (net_json), after the answers before it are gone */
+      r->jsonHeld = est; r->json = cJSON_ParseWithLength((const char *)r->body, r->len);
+      if (!r->json) { mem_give(r->jsonHeld); r->jsonHeld = 0; } } }
 }
 /* disk copies get a thread of their own: behind six stream addons (45 s each) a cached title page would wait as long */
 static void *file_worker(void *arg) { plat_thread_background(5);
@@ -171,9 +239,10 @@ static void *file_worker(void *arg) { plat_thread_background(5);
     while (!fqueue) pthread_cond_wait(&fcv, &mu);
     Req *r = fqueue; fqueue = r->next; if (!fqueue) fqueueTail = NULL; r->next = NULL;
     pthread_mutex_unlock(&mu);
-    if (!r->cancelled) { FILE *f = fopen(r->url, "rb"); r->status = 404;
+    if (!is_cancelled(r)) { FILE *f = r->url[0] ? fopen(r->url, "rb") : NULL; r->status = 404;
       if (f) { fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
-        if (n > 0 && (r->body = malloc((size_t)n + 1)) && fread(r->body, 1, (size_t)n, f) == (size_t)n) { r->body[n] = 0; r->len = (size_t)n; r->status = 200; }
+        if (n > 0 && (size_t)n < body_max() && mem_take(r, 0, (size_t)n + 1, 1)) { r->held = (size_t)n + 1; r->cap = r->held;
+          if ((r->body = malloc((size_t)n + 1)) && fread(r->body, 1, (size_t)n, f) == (size_t)n) { r->body[n] = 0; r->len = (size_t)n; r->status = 200; } }
         fclose(f); }
       parse_body(r); }
     pthread_mutex_lock(&mu);
@@ -183,7 +252,8 @@ static void *file_worker(void *arg) { plat_thread_background(5);
   return NULL;
 }
 unsigned net_file(const char *path, NetCb cb, void *ud) {
-  Req *r = calloc(1, sizeof *r); r->url = strdup(path); r->cb = cb; r->ud = ud; r->file = 1;
+  Req *r = calloc(1, sizeof *r); if (r) r->url = strdup(path ? path : ""); if (!r || !r->url) { req_free(r); return fail_later(cb, ud); }
+  r->cb = cb; r->ud = ud; r->file = 1;
   pthread_mutex_lock(&mu);
   r->id = nextId++; if (fqueueTail) fqueueTail->next = r; else fqueue = r; fqueueTail = r; npending++;
   pthread_cond_signal(&fcv); pthread_mutex_unlock(&mu);
@@ -197,9 +267,10 @@ static void *worker(void *arg) { plat_thread_background(5);
     Req *r; if (slot >= SLOW0) { r = slowQ; slowQ = r->next; if (!slowQ) slowTail = NULL; } else { r = queue; queue = r->next; if (!queue) queueTail = NULL; }
     r->next = NULL; inflight[slot] = r;
     pthread_mutex_unlock(&mu);
-    if (!r->cancelled) { perform(r, slot);
+    if (!is_cancelled(r)) { perform(r, slot);
       /* a JSON answer is parsed here, off the drawing thread (catalogs, metadata, streams: tens of ms each on a TV) */
-      parse_body(r); }
+      if (!r->refused && !is_cancelled(r)) parse_body(r); }
+    if (r->refused || is_cancelled(r)) { free(r->body); r->body = NULL; r->len = r->cap = 0; mem_give(r->held); r->held = 0; } /* (its callback gets no body: what it held is free for the others now, not when it is handed on) */
     pthread_mutex_lock(&mu);
     inflight[slot] = NULL; r->done = 1; r->next = finished; finished = r;
     pthread_mutex_unlock(&mu);
@@ -241,16 +312,22 @@ int net_init(const char *ca) {
   f_global_init(CURL_GLOBAL_ALL);
   share_setup();
   if (ca) snprintf(caPath, sizeof caPath, "%s", ca);
-  for (int i = 0; i < WORKERS; i++) { pthread_t t; pthread_create(&t, NULL, worker, (void *)(size_t)i); pthread_detach(t); }
-  { pthread_t t; pthread_create(&t, NULL, file_worker, NULL); pthread_detach(t); }
-  return 1;
+  int quick = 0, slow = 0;
+  for (int i = 0; i < WORKERS; i++) { pthread_t t; if (pthread_create(&t, NULL, worker, (void *)(size_t)i)) continue; pthread_detach(t); if (i < SLOW0) quick++; else slow++; }
+  { pthread_t t; if (!pthread_create(&t, NULL, file_worker, NULL)) pthread_detach(t); else fprintf(stderr, "[net] no thread for disk reads\n"); }
+  if (quick < SLOW0 || slow < WORKERS - SLOW0) fprintf(stderr, "[net] only %d + %d of %d request threads started\n", quick, slow, WORKERS);
+  { size_t b; net_mem_stats(NULL, NULL, &b, NULL); fprintf(stderr, "[net] answers may hold %u MB at once (one at most %u MB)\n", (unsigned)(b >> 20), (unsigned)(body_max() >> 20)); }
+  return quick > 0 && slow > 0;
 }
 static void push_req(Req *r) { /* under mu */
   if (r->timeoutMs > 20000) { if (slowTail) slowTail->next = r; else slowQ = r; slowTail = r; pthread_cond_signal(&slowCv); }
   else { if (queueTail) queueTail->next = r; else queue = r; queueTail = r; pthread_cond_signal(&cv); }
 }
 static unsigned enqueue_x(const char *url, const char *hdr, const char *post, const char *ctype, long timeoutMs, int size, NetCb cb, void *ud) {
-  Req *r = calloc(1, sizeof *r); r->url = strdup(url); r->hdr = hdr ? strdup(hdr) : NULL; r->post = post ? strdup(post) : NULL; r->ctype = ctype ? strdup(ctype) : NULL; r->cb = cb; r->ud = ud; r->timeoutMs = timeoutMs; r->size = size;
+  Req *r = calloc(1, sizeof *r);
+  if (r) { r->url = strdup(url ? url : ""); r->hdr = hdr ? strdup(hdr) : NULL; r->post = post ? strdup(post) : NULL; r->ctype = ctype ? strdup(ctype) : NULL; }
+  if (!r || !r->url || (hdr && !r->hdr) || (post && !r->post) || (ctype && !r->ctype)) { req_free(r); return fail_later(cb, ud); }
+  r->cb = cb; r->ud = ud; r->timeoutMs = timeoutMs; r->size = size;
   pthread_mutex_lock(&mu);
   r->id = nextId++; push_req(r); npending++;
   pthread_mutex_unlock(&mu);
@@ -268,8 +345,11 @@ unsigned net_post_hdr_t(const char *url, const char *body, const char *contentTy
   return enqueue_c(url, headers, body ? body : "", contentType ? contentType : "", timeoutMs, cb, ud);
 }
 unsigned net_send(const char *method, const char *url, const char *headers, const void *body, size_t len, int timeoutMs, NetCb cb, void *ud) {
-  Req *r = calloc(1, sizeof *r); r->url = strdup(url); r->hdr = headers ? strdup(headers) : NULL; r->method = strcmp(method, "POST") ? strdup(method) : NULL; r->cb = cb; r->ud = ud; r->timeoutMs = timeoutMs;
-  r->post = malloc(len + 1); memcpy(r->post, body, len); r->post[len] = 0; r->postLen = len;
+  Req *r = calloc(1, sizeof *r);
+  if (r) { r->url = strdup(url ? url : ""); r->hdr = headers ? strdup(headers) : NULL; r->method = strcmp(method, "POST") ? strdup(method) : NULL; r->post = malloc(len + 1); }
+  if (!r || !r->url || (headers && !r->hdr) || (strcmp(method, "POST") && !r->method) || !r->post) { req_free(r); return fail_later(cb, ud); }
+  r->cb = cb; r->ud = ud; r->timeoutMs = timeoutMs;
+  if (len) memcpy(r->post, body, len); r->post[len] = 0; r->postLen = len;
   pthread_mutex_lock(&mu);
   r->id = nextId++; push_req(r); npending++;
   pthread_mutex_unlock(&mu);
@@ -277,12 +357,13 @@ unsigned net_send(const char *method, const char *url, const char *headers, cons
 }
 void net_cancel(unsigned id) {
   pthread_mutex_lock(&mu);
-  for (Req *r = queue; r; r = r->next) if (r->id == id) r->cancelled = 1;
-  for (Req *r = slowQ; r; r = r->next) if (r->id == id) r->cancelled = 1;
-  for (Req *r = fqueue; r; r = r->next) if (r->id == id) r->cancelled = 1;
-  for (int i = 0; i < WORKERS; i++) if (inflight[i] && inflight[i]->id == id) inflight[i]->cancelled = 1;
-  for (Req *r = finished; r; r = r->next) if (r->id == id) r->cancelled = 1;
+  for (Req *r = queue; r; r = r->next) if (r->id == id) set_cancelled(r);
+  for (Req *r = slowQ; r; r = r->next) if (r->id == id) set_cancelled(r);
+  for (Req *r = fqueue; r; r = r->next) if (r->id == id) set_cancelled(r);
+  for (int i = 0; i < WORKERS; i++) if (inflight[i] && inflight[i]->id == id) set_cancelled(inflight[i]);
+  for (Req *r = finished; r; r = r->next) if (r->id == id) set_cancelled(r);
   pthread_mutex_unlock(&mu);
+  pthread_mutex_lock(&memMu); pthread_cond_broadcast(&memCv); pthread_mutex_unlock(&memMu); /* (a worker waiting for room sees it at once) */
 }
 int net_pending(void) { return npending; }
 /* parsed answers are freed on a thread of their own: deleting a catalog's tree (thousands of small blocks, made by a
@@ -296,7 +377,8 @@ void net_json_free(cJSON *j) {
   pthread_mutex_lock(&jfMu);
   if (!jfThread) { pthread_t t; if (pthread_create(&t, NULL, jf_run, NULL) == 0) { pthread_detach(t); jfThread = 1; } }
   if (!jfThread) { pthread_mutex_unlock(&jfMu); cJSON_Delete(j); return; }
-  JF *f = malloc(sizeof *f); f->j = j; f->next = jfHead; jfHead = f; pthread_cond_signal(&jfCv); pthread_mutex_unlock(&jfMu);
+  JF *f = malloc(sizeof *f); if (!f) { pthread_mutex_unlock(&jfMu); cJSON_Delete(j); return; } /* (no room for the note: freed here) */
+  f->j = j; f->next = jfHead; jfHead = f; pthread_cond_signal(&jfCv); pthread_mutex_unlock(&jfMu);
 }
 static const unsigned char *curBody; static cJSON *curJson;
 cJSON *net_json(const unsigned char *body) {
@@ -304,23 +386,27 @@ cJSON *net_json(const unsigned char *body) {
   return body ? cJSON_Parse((const char *)body) : NULL;
 }
 void net_pump(void) {
-  pthread_mutex_lock(&mu); Req *list = finished; finished = NULL; pthread_mutex_unlock(&mu);
+  Failed fl[64]; int nf = 0;
+  pthread_mutex_lock(&mu); Req *list = finished; finished = NULL; if (nfail) { nf = nfail; memcpy(fl, failQ, (size_t)nf * sizeof *fl); nfail = 0; } pthread_mutex_unlock(&mu);
+  for (int i = 0; i < nf; i++) { if (fl[i].cb) fl[i].cb(0, (const unsigned char *)"", 0, fl[i].ud); pthread_mutex_lock(&mu); npending--; pthread_mutex_unlock(&mu); }
   /* finished is LIFO; deliver in completion order */
   Req *rev = NULL; while (list) { Req *n = list->next; list->next = rev; rev = list; list = n; }
   while (rev) {
     Req *r = rev; rev = r->next;
     curBody = r->body; curJson = r->json; r->json = NULL;
     { static int slowLog = -1; if (slowLog < 0) slowLog = getenv("SB_SLOWLOG") != NULL; Uint32 tc0 = slowLog ? SDL_GetTicks() : 0;
-      if (r->cb) { if (r->cancelled) r->cb(-1, NULL, 0, r->ud); else r->cb(r->status, r->body ? r->body : (const unsigned char *)"", r->len, r->ud); }
+      if (r->cb) { if (is_cancelled(r)) r->cb(-1, NULL, 0, r->ud); else r->cb(r->status, r->body ? r->body : (const unsigned char *)"", r->len, r->ud); }
       if (slowLog && SDL_GetTicks() - tc0 > 6) fprintf(stderr, "[netcb] %u ms for %.120s (%zu bytes)\n", SDL_GetTicks() - tc0, r->url, r->len); } /* development: which answers cost a frame */
     if (curJson) net_json_free(curJson); curJson = NULL; curBody = NULL; /* the callback did not want the tree */
     pthread_mutex_lock(&mu); npending--; pthread_mutex_unlock(&mu);
-    free(r->url); free(r->hdr); free(r->post); free(r->ctype); free(r->method); free(r->body); free(r);
+    size_t held = r->held + r->jsonHeld; /* (the tree was handed to the callback or to the freeing thread: either way it is not ours to count now) */
+    req_free(r); mem_give(held);
   }
 }
 unsigned char *net_fetch_sync(const char *url, size_t *len, int *status, int timeoutMs) { return net_fetch_sync_hdr(url, NULL, len, status, timeoutMs); }
 unsigned char *net_fetch_sync_hdr(const char *url, const char *hdr, size_t *len, int *status, int timeoutMs) {
   Req r; memset(&r, 0, sizeof r); r.url = (char *)url;
+  if (!f_easy_init) { *status = 0; *len = 0; return NULL; }
   CURL *c = f_easy_init(); if (!c) { *status = 0; *len = 0; return NULL; }
   struct curl_slist *hs = hdr ? f_slist_append(NULL, hdr) : NULL, *pin = ts_pin(c, url); if (hs) f_easy_setopt(c, CURLOPT_HTTPHEADER, hs);
   f_easy_setopt(c, CURLOPT_URL, url); f_easy_setopt(c, CURLOPT_WRITEFUNCTION, on_data); f_easy_setopt(c, CURLOPT_WRITEDATA, &r);
@@ -329,8 +415,9 @@ unsigned char *net_fetch_sync_hdr(const char *url, const char *hdr, size_t *len,
   f_easy_setopt(c, CURLOPT_USERAGENT, ua()); f_easy_setopt(c, CURLOPT_ACCEPT_ENCODING, "");
   if (caPath[0]) f_easy_setopt(c, CURLOPT_CAINFO, caPath);
   CURLcode rc = f_easy_perform(c); long code = 0; f_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code); f_easy_cleanup(c); if (hs) f_slist_free_all(hs); if (pin) f_slist_free_all(pin);
-  *status = rc == CURLE_OK ? (int)code : 0; *len = r.len;
-  if (*status != 200 && *status != 206) { free(r.body); return NULL; }
+  mem_give(r.held); /* (counted while it came; the caller's from here) */
+  *status = rc == CURLE_OK && !r.refused ? (int)code : 0; *len = r.len;
+  if (*status != 200 && *status != 206) { free(r.body); *len = 0; return NULL; }
   return r.body;
 }
 
@@ -362,7 +449,8 @@ int net_pipe_sync(const char *url, const char *headers, int head, NetHdrSink hs,
   if (!f_easy_init && !resolve()) return 0;
   CURL *c = f_easy_init(); if (!c) return 0;
   PipeCtx x = { hs, sink, ud, 0 }; struct curl_slist *sl = NULL;
-  char *hd = headers ? strdup(headers) : NULL; for (char *h = hd, *nl; h && *h; h = nl ? nl + 1 : NULL) { nl = strchr(h, '\n'); if (nl) *nl = 0; if (*h) sl = f_slist_append(sl, h); }
+  char *hd = headers ? strdup(headers) : NULL; if (headers && !hd) { f_easy_cleanup(c); return 0; }
+  for (char *h = hd, *nl; h && *h; h = nl ? nl + 1 : NULL) { nl = strchr(h, '\n'); if (nl) *nl = 0; if (*h) sl = f_slist_append(sl, h); }
   f_easy_setopt(c, CURLOPT_URL, url); f_easy_setopt(c, CURLOPT_HEADERFUNCTION, pipe_hdr); f_easy_setopt(c, CURLOPT_HEADERDATA, &x);
   f_easy_setopt(c, CURLOPT_WRITEFUNCTION, pipe_data); f_easy_setopt(c, CURLOPT_WRITEDATA, &x);
   f_easy_setopt(c, CURLOPT_XFERINFOFUNCTION, pipe_poll); f_easy_setopt(c, CURLOPT_XFERINFODATA, &x); f_easy_setopt(c, CURLOPT_NOPROGRESS, 0L);
@@ -406,7 +494,7 @@ void net_range_free(NetRange *r) { if (!r) return; if (r->c) f_easy_cleanup(r->c
 int net_range_get(NetRange *h, const char *url, long long start, long len, unsigned char **out, long *got, long long *total, int *httpStatus, int timeoutMs) {
   *out = NULL; *got = 0; if (total) *total = -1; if (httpStatus) *httpStatus = 0;
   if (!h || len <= 0) return NR_NET;
-  RangeCtx r; memset(&r, 0, sizeof r); r.buf = malloc(len); r.len = len; r.total = -1; r.crStart = -1; r.reqStart = start;
+  RangeCtx r; memset(&r, 0, sizeof r); r.buf = malloc(len); if (!r.buf) return NR_NET; r.len = len; r.total = -1; r.crStart = -1; r.reqStart = start;
   r.isRange = start > 0; /* asked from past the start: a 200 means no Range support */
   char rg[64]; snprintf(rg, sizeof rg, "%lld-%lld", start, start + len - 1);
   CURL *c = h->c;

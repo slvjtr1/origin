@@ -6,4 +6,6 @@
 void sync_init(void);   /* at start, before the first screen */
 void sync_tick(void);   /* once a frame */
 int  sync_away(void);   /* the TV has the app at the back (another app, the home launcher, the screen saver) */
+int  sync_blurred(void); /* only the focus is elsewhere (a system keyboard or menu over the app, which stays in view) */
+double sync_away_for(void); /* seconds at the back so far (0 in front) */
 #endif

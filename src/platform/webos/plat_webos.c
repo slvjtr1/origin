@@ -111,21 +111,21 @@ int plat_mem_total_mb(void) {
   char line[128]; long kb = 0; while (fgets(line, sizeof line, f)) if (sscanf(line, "MemTotal: %ld kB", &kb) == 1) break;
   fclose(f); return (int)(kb / 1024);
 }
-/* the TV sends the app to the back for another app, the home launcher or the screen saver, and a relaunch
-   (its icon picked while it runs) brings the same process back: the window loses and regains its focus,
-   with the app-level events where SDL gives them. Only a return after a leave counts, so the first focus at
-   start is not a resume */
+/* the TV sends the app to the back for another app, the home launcher or the screen saver, and a relaunch (its icon
+   picked while it runs) brings the same process back. The app-level events and a hidden or minimised window say so
+   plainly; a lost focus alone does not: the TV's own keyboard, the quick settings and the volume or input menus take
+   the focus over an app that stays in view. Those are told apart here (-2 / 2) and core/sync.c decides: a focus that
+   stays away long enough counts as the back after all (some firmwares send nothing else for another app). Nothing is
+   kept here: this may run on SDL's event-watch thread */
 int plat_lifecycle(const SDL_Event *e) {
-  static int away;
-  int in = 0, out = 0;
-  if (e->type == SDL_APP_WILLENTERBACKGROUND || e->type == SDL_APP_DIDENTERBACKGROUND) out = 1;
-  else if (e->type == SDL_APP_WILLENTERFOREGROUND || e->type == SDL_APP_DIDENTERFOREGROUND) in = 1;
-  else if (e->type == SDL_WINDOWEVENT) switch (e->window.event) {
-    case SDL_WINDOWEVENT_FOCUS_LOST: case SDL_WINDOWEVENT_HIDDEN: case SDL_WINDOWEVENT_MINIMIZED: out = 1; break;
-    case SDL_WINDOWEVENT_FOCUS_GAINED: case SDL_WINDOWEVENT_SHOWN: case SDL_WINDOWEVENT_RESTORED: in = 1; break;
+  if (e->type == SDL_APP_WILLENTERBACKGROUND || e->type == SDL_APP_DIDENTERBACKGROUND) return -1;
+  if (e->type == SDL_APP_WILLENTERFOREGROUND || e->type == SDL_APP_DIDENTERFOREGROUND) return 1;
+  if (e->type == SDL_WINDOWEVENT) switch (e->window.event) {
+    case SDL_WINDOWEVENT_HIDDEN: case SDL_WINDOWEVENT_MINIMIZED: return -1;
+    case SDL_WINDOWEVENT_SHOWN: case SDL_WINDOWEVENT_RESTORED: return 1;
+    case SDL_WINDOWEVENT_FOCUS_LOST: return -2;
+    case SDL_WINDOWEVENT_FOCUS_GAINED: return 2;
     default: break; }
-  if (out) { if (!away) fprintf(stderr, "[life] to the back (%d/%d)\n", e->type, e->type == SDL_WINDOWEVENT ? e->window.event : 0); away = 1; return -1; }
-  if (in && away) { away = 0; fprintf(stderr, "[life] back in front (%d/%d)\n", e->type, e->type == SDL_WINDOWEVENT ? e->window.event : 0); return 1; }
   return 0;
 }
 /* Settings > Language "Auto": the TV's UI language, from its settings service, as the system apps read it */

@@ -83,7 +83,7 @@ static void rebuild(void) {
 }
 static void add(const Stream *arr, int n, int gIdx, const char *gName, int resume) {
   if (gIdx >= MAXG) return; Group *g = &S.groups[gIdx]; if (gIdx >= S.ng) S.ng = gIdx + 1; if (!g->name[0]) snprintf(g->name, sizeof g->name, "%s", gName ? gName : T("Addon")); g->resume = resume;
-  int k = n < 40 - g->n ? n : 40 - g->n; if (k > 0) { g->items = realloc(g->items, (g->n + k) * sizeof *g->items); memcpy(g->items + g->n, arr, k * sizeof *arr); g->n += k; }
+  int k = n < 40 - g->n ? n : 40 - g->n; if (k > 0) { Stream *ni = realloc(g->items, (g->n + k) * sizeof *g->items); if (ni) { g->items = ni; memcpy(g->items + g->n, arr, k * sizeof *arr); g->n += k; } }
   count_redo();
   if (S.open) { render_chips(); rebuild(); }
 }

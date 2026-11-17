@@ -1,3 +1,4 @@
+#include "core/memctl.h"
 #include "screens/player.h"
 #include "screens/board.h"
 #include "core/app.h"
@@ -1457,7 +1458,7 @@ static void render_tray(int fresh) {
 }
 static int subTab; /* the subtitle tab last used (kept while the app runs) */
 static void open_tray(int kind) {
-  if (kind != 2 && kind != 5) srcs_free(); else { mo_set(&SR.y, 0); mo_set(&SR.plA, 0); }
+  if (kind != 2 && kind != 5) srcs_free(); else { mo_set(&SR.y, 0); mo_set(&SR.plA, 0); mem_note(kind == 2 ? "the sources tray opens" : "an episode's sources open"); }
   P.mode = 2; memset(&P.tray.row, 0, sizeof P.tray.row); P.tray.kind = kind; P.tray.idx = -1; P.tray.zone = 0; P.tray.onBtn = 0; P.tray.n = 0; P.tray.ntabs = 0;
   if (kind == 1) P.tray.season = season_of(P.vid);
   if (kind == 4) { load_emb_tracks(); P.tray.tab = subTab; P.tray.zone = 1; } /* the subtitles open on their tabs (kept when there are any) */

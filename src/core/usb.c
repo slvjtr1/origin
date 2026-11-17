@@ -22,6 +22,7 @@
 #include "platform/plat.h"
 #include "screens/player.h"
 #include "ui/usbprep.h"
+#include "core/usbcheck.h"
 #include "cJSON.h"
 #include <dirent.h>
 #include <errno.h>
@@ -80,9 +81,9 @@ static int dev_alive(const char *p) {
 }
 /* can the app write there, and free bytes inside a file (else the engine keeps segment files) */
 static int probe(const char *mnt, int *punch) {
-  char p[640]; snprintf(p, sizeof p, "%s/.sb-probe-%d", mnt, (int)getpid());
-  int fd = open(p, O_CREAT | O_TRUNC | O_RDWR, 0600); if (fd < 0) return 0;
-  char buf[4096]; memset(buf, 7, sizeof buf); int ok = 1; for (int i = 0; i < 16 && ok; i++) ok = write(fd, buf, sizeof buf) == (ssize_t)sizeof buf;
+  char p[640]; int fd = usbcheck_open_own(mnt, ".sb-probe", p, sizeof p); if (fd < 0) return 0; /* (a new file of its own: never one that was there) */
+  struct stat own; if (fstat(fd, &own)) { close(fd); return 0; }
+  char buf[4096]; memset(buf, 7, sizeof buf); int ok = 1; for (int i = 0; i < 16 && ok; i++) ok = usbcheck_write_all(fd, buf, sizeof buf);
   *punch = 0;
   if (ok) {
 #ifdef __linux__
@@ -91,7 +92,7 @@ static int probe(const char *mnt, int *punch) {
     struct fpunchhole h; memset(&h, 0, sizeof h); h.fp_offset = 16 * 1024; h.fp_length = 32 * 1024; *punch = !fcntl(fd, F_PUNCHHOLE, &h);
 #endif
   }
-  int er = ok ? 0 : errno; close(fd); unlink(p); errno = er; return ok;
+  int er = ok ? 0 : errno; close(fd); usbcheck_unlink_own(p, &own); errno = er; return ok;
 }
 
 /* the candidates of one look: path, the type the source gave, uuid and label when the source knows them */
@@ -218,6 +219,10 @@ static void *watch(void *a) { (void)a; plat_thread_background(15);
 int usb_drive(UsbDrive *o) { pthread_mutex_lock(&mu); int h = have; if (h && o) *o = cur; pthread_mutex_unlock(&mu); return h; }
 int usb_cache_on(UsbDrive *o) { pthread_mutex_lock(&mu); int r = have && on; if (r && o) *o = cur; pthread_mutex_unlock(&mu); return r; }
 int usb_unreachable(char *name, size_t n) { pthread_mutex_lock(&mu); int u = unreach; if (u && name && n) snprintf(name, n, "%s", unreachName); pthread_mutex_unlock(&mu); return u; }
+#ifndef SB_APP_ID
+#define SB_APP_ID "tv.stremioorigin.app"
+#endif
+void usb_engine_dir(const char *mnt, char *o, size_t n) { snprintf(o, n, "%s/%s-engine", mnt, SB_APP_ID); }
 unsigned usb_serial(void) { pthread_mutex_lock(&mu); unsigned s = serial; pthread_mutex_unlock(&mu); return s; }
 
 /* the notice: asked once per drive while it was never answered, when no film plays */
@@ -249,7 +254,7 @@ void usb_pump(void) {
 #ifdef SB_ANDROID
   ask = 0; /* (Android TV: torrents stay in the app's own storage) */
 #endif
-  if (ask && calm() && !usbprep_busy()) { ask = 0; UsbDrive d; if (usb_drive(&d) && !strcmp(d.id, askedFor)) usbprep_show(&d, key); }
+  if (ask && calm() && !usbprep_busy()) { UsbDrive d; if (!usb_drive(&d) || strcmp(d.id, askedFor)) ask = 0; else if (usbprep_show(&d, key)) ask = 0; }
   if (tellJail == 1 && calm()) { tellJail = 2; update_notice(T("Restart the TV for USB"), T("Why"), open_usb_restart); } /* (like the update: from the Settings icon) */
 }
 void usb_shutdown(void) {

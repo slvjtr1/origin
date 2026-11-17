@@ -2,7 +2,8 @@
    the drawing thread) and keeps the best writable USB drive: when one comes that was never seen, a card says what is
    being checked (ui/usbprep.c: it can be written, how fast it is) and a drive fast enough is switched on by itself
    (kept per drive in the store; Settings > Playback turns it off). While it is on and the drive is there, torrents keep their window on it (p2p.c); when it goes,
-   they move on by themselves. Development: SB_USB_DIR=<folder> stands in for a drive mounted there, SB_USB_ON=1 counts it as switched on. */
+   they move on by themselves. A drive plugged in after the app's sandbox was made is not in view on some webOS
+   versions (developer mode, Homebrew): the app says so ("Restart the TV for USB") instead of promising it. Development: SB_USB_DIR=<folder> stands in for a drive mounted there, SB_USB_ON=1 counts it as switched on. */
 #ifndef SB_USB_H
 #define SB_USB_H
 #include <stddef.h>
@@ -19,5 +20,6 @@ int         usb_drive(UsbDrive *out);       /* 1 and the drive when one is there
 int         usb_cache_on(UsbDrive *out);    /* 1 when torrents should use it now: there and switched on (any thread) */
 int         usb_unreachable(char *name, size_t n); /* 1 when the TV has a drive mounted that this app cannot reach (a jail made before it came); its label */
 unsigned    usb_serial(void);               /* changes when a drive comes or goes, or its switch changes */
+void        usb_engine_dir(const char *mnt, char *out, size_t n); /* the torrent engine's folder on a drive */
 void        usb_shutdown(void);             /* the watcher ends (at exit) */
 #endif

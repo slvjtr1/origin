@@ -1,20 +1,20 @@
 {
-  "version": "1.4.0",
+  "version": "1.4.1",
   "items": [
     {
       "icon": "g_chip",
+      "title": "Steadier Sources",
+      "text": "A fault that could close the app when many addons answered at once, as on the first press of Sources, is fixed."
+    },
+    {
+      "icon": "g_chip",
       "title": "Lighter on your TV",
-      "text": "ORIGIN hands memory back to the TV at once: when a film starts, when you leave it, and when you press Home."
+      "text": "Memory is kept within bounds while addons answer, and handed back without stalling the picture."
     },
     {
       "icon": "g_usb",
       "title": "Plug in a drive, that is all",
-      "text": "A new USB drive is checked in seconds and torrents buffer on it by themselves. An SSD works best."
-    },
-    {
-      "icon": "wn_subs",
-      "title": "Your subtitle languages, every time",
-      "text": "Found whatever way an addon names the language. Your second language steps in when the first has none."
+      "text": "The USB check stops cleanly when the drive is pulled out, touches only its own files, and OK hides it."
     }
   ]
 }

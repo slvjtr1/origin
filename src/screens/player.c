@@ -302,9 +302,9 @@ static MkvSession *prev_src_pick(void) {
   return mkv; }
 /* previews first (Settings > Playback, Off or 50 % to 100 %): a direct or debrid film starts once that much of it has
    its seek previews; it loads meanwhile and waits on its first frame behind the art, so OK (Play now) or the share
-   reached starts it at once. The time left is estimated from the pace so far. It gives up (the film starts) when no
+   reached starts it at once (off unless chosen). The time left is estimated from the pace so far. It gives up (the film starts) when no
    picture has come for 20 s, the film has none, or after 4 minutes. */
-static int pw_target(void) { const char *v = store_get("seekPreviewsWait", "80"); /* (on by default: 80 %) */ if (!strcmp(v, "true")) return 70; int n = atoi(v); return n >= 50 && n <= 100 ? n : 0; }
+static int pw_target(void) { const char *v = store_get("seekPreviewsWait", "false"); /* (off by default: the film starts at once; 50 % to 100 % when chosen) */ if (!strcmp(v, "true")) return 70; int n = atoi(v); return n >= 50 && n <= 100 ? n : 0; }
 static int pw_wanted(void) { return pw_target() > 0 && prev_enabled() && prev_available() && !P.adopt && !P.isTrailer && !P.isHls && !P.isP2p && !strncmp(P.url, "http", 4) && !live_title(); }
 __attribute__((weak)) void video_start_silent(int on) { (void)on; } /* (a platform without it: as before) */
 static void pw_end(const char *why) { if (!P.pw.on) return; P.pw.on = 0; video_start_silent(0); video_set_volume(100, 300); /* (its sound comes up softly as it starts) */ fprintf(stderr, "[player] previews first: %d %% of %d %% in %.1f s (%s), the film starts\n", sp_progress() < 0 ? 0 : sp_progress(), P.pw.target, now_() - P.pw.t0, why);

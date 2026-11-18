@@ -1,25 +1,10 @@
 {
-  "version": "1.5.1",
+  "version": "1.5.2",
   "items": [
     {
-      "icon": "wn_live",
-      "title": "Account switching",
-      "text": "Trakt activity, profiles and upcoming episode dismissals stay with your account."
-    },
-    {
-      "icon": "trakt",
-      "title": "Playback preferences",
-      "text": "Subtitle requests follow the current title. Forced subtitles and per-show audio choices work across more sources."
-    },
-    {
       "icon": "wn_av",
-      "title": "Discover and search",
-      "text": "Browse longer catalogs and see available search results while slower sources respond."
-    },
-    {
-      "icon": "wn_new",
-      "title": "Film collections",
-      "text": "Collection pages recover from delayed title lookups and finish loading when a source is unavailable."
+      "title": "Faster playback start",
+      "text": "Debrid and direct streams start as soon as they are ready. Seek bar previews are made while the film plays. Settings > Playback > Load previews before playing brings back the wait."
     }
   ]
 }

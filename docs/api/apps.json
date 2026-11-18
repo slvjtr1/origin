@@ -16,22 +16,19 @@
       "fullDescriptionUrl": "apps/tv.stremioorigin.app/full_description.html",
       "manifest": {
         "id": "tv.stremioorigin.app",
-        "version": "1.5.1",
+        "version": "1.5.2",
         "type": "native",
         "title": "Origin",
         "appDescription": "Your own Stremio account and addons on your LG TV: artwork and full-screen trailers, the best stream in one press, Live TV, Trakt, styled subtitles, clean search. Unofficial.",
         "iconUri": "https://slvjtr1.github.io/origin/icon.png",
         "sourceUrl": "https://github.com/slvjtr1/origin",
         "rootRequired": false,
-        "ipkUrl": "https://github.com/slvjtr1/origin/releases/download/v1.5.1/tv.stremioorigin.app_1.5.1_arm.ipk",
+        "ipkUrl": "https://github.com/slvjtr1/origin/releases/download/v1.5.2/tv.stremioorigin.app_1.5.2_arm.ipk",
         "ipkHash": {
-          "sha256": "c6ea19700d0c1228f3fea8c30b4c36af14ee99f2d8dff92de676db5ee64e73e8"
+          "sha256": "f7a0700beaf63c7349dd7061315e24b6a2fbbebcadf652f9e48202967faba098"
         },
         "notes": [
-          "Account switching: Trakt activity, profiles and upcoming episode dismissals stay with your account.",
-          "Playback preferences: Subtitle requests follow the current title. Forced subtitles and per-show audio choices work across more sources.",
-          "Discover and search: Browse longer catalogs and see available search results while slower sources respond.",
-          "Film collections: Collection pages recover from delayed title lookups and finish loading when a source is unavailable."
+          "Faster playback start: Debrid and direct streams start as soon as they are ready. Seek bar previews are made while the film plays. Settings > Playback > Load previews before playing brings back the wait."
         ]
       }
     }

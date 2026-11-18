@@ -291,7 +291,7 @@ static void build(void) {
   set_s(&playBase[17], "showChapters", "Chapters", "", OO, 2, "true");
   prev_available(); /* (its library looked at in the background now, so the row is there when Settings opens) */
   set_s(&playBase[18], "seekPreviews", "Previews on the seek bar", "Pictures from the film over the bar as you move through it. Off: none are made", OO, 2, "true"); /* the file's chapters on the seek bar and in the seek pill */
-  set_s(&playBase[19], "seekPreviewsWait", "Load previews before playing", "The film starts once this much of it has its previews; OK starts it at once", PWO, 7, "80"); playBase[19].sub = 1;
+  set_s(&playBase[19], "seekPreviewsWait", "Load previews before playing", "The film starts once this much of it has its previews; OK starts it at once", PWO, 7, "false"); playBase[19].sub = 1;
   set_s(&playBase[2], "aspectMode", "Picture size", "Original, fill the screen or zoom", ASPECT, 3, "fit");
   set_s(&playBase[3], "bgTrailer", "Background trailers", "A trailer plays behind Home after a few seconds", OO, 2, "true");
   set_s(&playBase[4], "autoBest", "Play the best stream automatically", "", OO, 2, "false");

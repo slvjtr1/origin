@@ -33,6 +33,8 @@ const char *i18n_tv_lang(void) {
   if (!loc || !*loc) loc = getenv("LANG");
   if (!loc || strlen(loc) < 2) loc = "en";
   tvLang[0] = (char)(loc[0] | 32); tvLang[1] = (char)(loc[1] | 32); tvLang[2] = 0;
+  if (!strcmp(tvLang, "pt") && (loc[2] == '-' || loc[2] == '_') && (loc[3] | 32) == 'b' && (loc[4] | 32) == 'r') snprintf(tvLang, sizeof tvLang, "pt-BR"); /* Brazil's own words, not Portugal's */
+  if (!strcmp(tvLang, "nb") || !strcmp(tvLang, "nn")) snprintf(tvLang, sizeof tvLang, "no"); /* Norwegian, whichever written form the TV names */
   return tvLang;
 }
 /* first run: the subtitle and audio languages follow the TV's language too (only while never chosen: a choice
@@ -40,12 +42,16 @@ const char *i18n_tv_lang(void) {
 static void first_run_defaults(void) {
   static int done; if (done) return; done = 1;
   if (store_get("subsLang", NULL) && store_get("defaultAudioTrack", NULL)) return;
-  static const char *M[][2] = { { "en", "eng" }, { "ar", "ara" }, { "fr", "fre" }, { "es", "spa" }, { "de", "ger" }, { "it", "ita" }, { "pt", "por" }, { "ru", "rus" }, { "tr", "tur" }, { "pl", "pol" },
-    { "nl", "dut" }, { "sv", "swe" }, { "he", "heb" }, { "hi", "hin" }, { "ja", "jpn" }, { "ko", "kor" }, { "zh", "chi" } };
+  static const char *M[][2] = { { "en", "eng" }, { "ar", "ara" }, { "fr", "fre" }, { "es", "spa" }, { "de", "ger" }, { "it", "ita" }, { "pt-BR", "pob" }, { "pt", "por" }, { "ru", "rus" }, { "tr", "tur" }, { "pl", "pol" },
+    { "nl", "dut" }, { "el", "gre" }, { "sv", "swe" }, { "he", "heb" }, { "hi", "hin" }, { "ja", "jpn" }, { "ko", "kor" }, { "zh", "chi" },
+    { "ro", "rum" }, { "hu", "hun" }, { "cs", "cze" }, { "da", "dan" }, { "fi", "fin" }, { "no", "nor" }, { "nb", "nor" }, { "uk", "ukr" }, { "bg", "bul" }, { "hr", "hrv" }, { "sr", "srp" }, { "bs", "bos" },
+    { "sk", "slo" }, { "sl", "slv" }, { "et", "est" }, { "lv", "lav" }, { "lt", "lit" }, { "sq", "alb" }, { "mk", "mac" }, { "is", "ice" }, { "ca", "cat" }, { "eu", "baq" }, { "gl", "glg" }, { "ka", "geo" },
+    { "hy", "arm" }, { "bn", "ben" }, { "ta", "tam" }, { "te", "tel" }, { "ur", "urd" }, { "ml", "mal" }, { "si", "sin" }, { "tl", "tgl" }, { "ku", "kur" }, { "mn", "mon" }, { "fa", "per" }, { "th", "tha" },
+    { "vi", "vie" }, { "id", "ind" }, { "ms", "may" } }; /* (a TV in any language Settings offers starts with it) */
   const char *tv = i18n_tv_lang(), *c = NULL; for (size_t i = 0; i < sizeof M / sizeof M[0]; i++) if (!strcmp(M[i][0], tv)) c = M[i][1];
   if (!c) return;
   if (!store_get("subsLang", NULL)) store_set("subsLang", c);
-  if (!store_get("defaultAudioTrack", NULL)) store_set("defaultAudioTrack", c);
+  /* (the audio stays Original by default: each film in its own language) */
 }
 static unsigned langGen = 1;
 unsigned i18n_gen(void) { return langGen; }
@@ -73,7 +79,7 @@ int i18n_init(const char *assetDir, const char *want) {
     if (d) closedir(d);
   }
   index_build();
-  rtl = !strcmp(lang, "ar");
+  rtl = !strcmp(lang, "ar") || !strcmp(lang, "fa");
   return 1;
 }
 const char *i18n_lang(void) { return lang; }

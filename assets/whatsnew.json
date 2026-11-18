@@ -1,20 +1,45 @@
 {
-  "version": "1.4.1",
+  "version": "1.5.0",
   "items": [
     {
-      "icon": "g_chip",
-      "title": "Steadier Sources",
-      "text": "A fault that could close the app when many addons answered at once, as on the first press of Sources, is fixed."
+      "icon": "wn_live",
+      "title": "Live TV",
+      "text": "Channels and sports from your live addons, with Favorites and Recent."
     },
     {
-      "icon": "g_chip",
-      "title": "Lighter on your TV",
-      "text": "Memory is kept within bounds while addons answer, and handed back without stalling the picture."
+      "icon": "trakt",
+      "title": "Trakt",
+      "text": "What you watch tracked, watched marks, Continue Watching and Trakt rows on Home. Bring your own Client ID."
     },
     {
-      "icon": "g_usb",
-      "title": "Plug in a drive, that is all",
-      "text": "The USB check stops cleanly when the drive is pulled out, touches only its own files, and OK hides it."
+      "icon": "wn_av",
+      "title": "Seek previews",
+      "text": "A picture of the film on the seek bar as you move through it, for debrid and direct links."
+    },
+    {
+      "icon": "wn_new",
+      "title": "Chapters",
+      "text": "The film's chapters on the seek bar and in the seek pill. Settings › Seek bar."
+    },
+    {
+      "icon": "wn_opts",
+      "title": "Tracks per show",
+      "text": "The subtitles and audio you pick stay for the whole show."
+    },
+    {
+      "icon": "wn_subs",
+      "title": "Subtitles your way",
+      "text": "20 fonts for Latin and Arabic, brightness, position and forced-only subtitles, set while you watch."
+    },
+    {
+      "icon": "collection",
+      "title": "Film collections",
+      "text": "On the title page, in Search and in the Library."
+    },
+    {
+      "icon": "spoilEye",
+      "title": "No spoilers",
+      "text": "Episodes you haven't watched: their pictures blurred, their stories hidden too if you like. Settings › Appearance."
     }
   ]
 }

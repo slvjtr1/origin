@@ -251,9 +251,6 @@ void usb_pump(void) {
     if (!u) tellJail = 0; else if (tellJail == 0) tellJail = 1;
   }
   usbprep_pump();
-#ifdef SB_ANDROID
-  ask = 0; /* (Android TV: torrents stay in the app's own storage) */
-#endif
   if (ask && calm() && !usbprep_busy()) { UsbDrive d; if (!usb_drive(&d) || strcmp(d.id, askedFor)) ask = 0; else if (usbprep_show(&d, key)) ask = 0; }
   if (tellJail == 1 && calm()) { tellJail = 2; update_notice(T("Restart the TV for USB"), T("Why"), open_usb_restart); } /* (like the update: from the Settings icon) */
 }

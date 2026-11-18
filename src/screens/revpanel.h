@@ -9,6 +9,8 @@
    switch between the show and that season; 0 = none); fx..fr: the box it grows out of (fw 0 = the middle) */
 void revpanel_show(const Item *it, int stackSeason, float fx, float fy, float fw, float fh, float fr);
 void revpanel_seasons(const int *list, int n); /* before revpanel_show on a series: the seasons its switch steps through */
+void revpanel_from_button(void); /* before revpanel_show: it grows out of a menu option (the box given) as that option's highlight */
+float revpanel_card_k(void);     /* 0..1: how far the panel (not the page one) is open: what it came from steps back */
 void revpanel_show_page(const Item *it); /* the title page's Down: it rises from the page's foot and Up from its top row lets it down */
 float revpanel_page_k(void);   /* 0..1: how far it has risen into the title page (0 not there) */
 int  revpanel_page_btns(void);
@@ -21,6 +23,6 @@ int   revpanel_comment_lines(const RevComment *c, float w, int max);   /* the li
 float revpanel_draw_comment(float x, float y, float w, const RevComment *c, int lit, int lines, float when);      /* when: the "n days ago" at k (0 none) */
 void  revpanel_draw_ring(float cx, float y, float d, const char *src, const char *val, float g); /* a source's ring round its mark, filled g of the way to its score, the score under it */
 float revpanel_badge(float x, float y, float h, const char *src, float share, int rtl); /* the source's mark (share: its score of 1, for its colour); the width */
-const RevComment *revpanel_sample(int i);   /* 0, 1, 2: sample reviews (1 in the app's language) */
+const RevComment *revpanel_sample(int i);   /* 0, 2: Trakt comments, 1: a TMDB review (in the app's language) */
 const int *revpanel_sample_dist(void);      /* a spread of ratings, 1..10 */
 #endif

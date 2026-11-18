@@ -17,11 +17,7 @@ typedef struct { const char *cat, *k, *v; int rel, lo, hi; } Want; /* rel: v is 
 typedef struct { int g, n, upscale; char note[96]; Want w[MAXW]; } Job;
 
 static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
-#ifdef SB_ANDROID
-static int on, gen, notice, clearSaved, avail = 0; /* Android TV: no app reaches the TV's own picture processing (the LG settings it tunes are webOS's) */
-#else
 static int on, gen, notice, clearSaved, avail = -1;
-#endif
 static char noteTxt[96];
 static cJSON *toSave, *saved;
 

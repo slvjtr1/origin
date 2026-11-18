@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # The built-in keys header: tools/sbkeys.py <keys.env> <out sbkeys.h>. Each key scrambled with a pad (not plain
-# text in the binary). Used by tools/build.sh; ports/androidtv/app/build.gradle.kts makes the same.
+# text in the binary). Used by tools/build.sh.
 import os, sys, hashlib
 src, out = sys.argv[1], sys.argv[2]; kv = {}
 if os.path.isfile(src):

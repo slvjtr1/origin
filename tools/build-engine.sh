@@ -2,7 +2,6 @@
 # Builds the torrent engine library the app loads when a torrent is first played:
 #   tools/build-engine.sh webos  -> build/webos/libsbengine.so     (ARMv7 soft-float, glibc, libc++ inside)
 #   tools/build-engine.sh mac    -> build/mac/libsbengine.dylib    (the Mac preview)
-#   tools/build-engine.sh android-arm64 | android-armv7 -> build/android/<abi>/libsbengine.so (Android TV 9 and later, NDK in $ANDROID_NDK)
 # Engine: github.com/NuvioMedia/nuvio-engine (GPL-3.0) at a pinned commit, libtorrent 2.0.12, Boost
 # 1.86, plus tools/engine/engine.patch (streaming window that frees far pieces from flash, live rate
 # limits, verified pieces served from disk in 256 KB reads, no UPnP/NAT-PMP, a window that scales down to
@@ -35,17 +34,7 @@ fi
 case "$TARGET" in
   webos) ZT="-target arm-linux-gnueabi.${GLIBC:-2.17} -mcpu=cortex_a9-neon -mfloat-abi=softfp"; OUT="$ROOT/build/webos/libsbengine.so"; SYS=Linux; PROC=arm ;;   # soft-float ABI like the app; this compiler drops NEON from the assembler there, so libtorrent takes its portable paths
   mac)   ZT=""; OUT="$ROOT/build/mac/libsbengine.dylib"; SYS=Darwin; PROC=aarch64 ;;
-  android-arm64|android-armv7) ABI=$([ "$TARGET" = android-arm64 ] && echo arm64-v8a || echo armeabi-v7a); OUT="$ROOT/build/android/$ABI/libsbengine.so"; SYS=Android ;;
   *) echo "unknown target $TARGET"; exit 1 ;;
-esac
-case "$TARGET" in android-*)   # the NDK's own toolchain: Android's libc, libc++ linked in
-  NDK="${ANDROID_NDK:?set ANDROID_NDK}"; B="$W/build-$TARGET-28"; FL="-ffunction-sections -fdata-sections -fvisibility=hidden -fvisibility-inlines-hidden -ffile-prefix-map=$HOME=/src -ffile-prefix-map=$ROOT=/app$WMAP"
-  [ -f "$B/build.ninja" ] || cmake -S "$SRC" -B "$B" -G Ninja ${CMAKE_MAKE_PROGRAM:+-DCMAKE_MAKE_PROGRAM="$CMAKE_MAKE_PROGRAM"} -DNUVIO_ENGINE_ENABLE_LIBTORRENT=ON -DNUVIO_ENGINE_BUILD_TESTS=OFF     -DFETCHCONTENT_SOURCE_DIR_NUVIO_BOOST="$DEPS/nuvio_boost-src" -DFETCHCONTENT_SOURCE_DIR_NUVIO_LIBTORRENT="$DEPS/nuvio_libtorrent-src"     -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" -DANDROID_ABI=$ABI -DANDROID_PLATFORM=android-28 -DANDROID_STL=c++_static     -DCMAKE_BUILD_TYPE=MinSizeRel -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_DISABLE_FIND_PACKAGE_OpenSSL=ON -DCMAKE_DISABLE_FIND_PACKAGE_GnuTLS=ON -DCMAKE_DISABLE_FIND_PACKAGE_LibGcrypt=ON     -DCMAKE_C_FLAGS="$FL" -DCMAKE_CXX_FLAGS="$FL" >/dev/null
-  ninja -j "${ENGINE_JOBS:-4}" -C "$B" nuvio_engine
-  CXX=$(ls "$NDK"/toolchains/llvm/prebuilt/*/bin/clang++* | head -1); TGT=$([ "$ABI" = arm64-v8a ] && echo aarch64-linux-android28 || echo armv7a-linux-androideabi28)
-  mkdir -p "$(dirname "$OUT")"; echo '{ global: sbe_get; local: *; };' > "$B/exports.map"
-  "$CXX" --target=$TGT -std=c++20 -Os -fPIC $FL -shared -I"$SRC/include" -I"$ROOT/src" "$ROOT/tools/engine/sbengine.cpp"     "$B/libnuvio_engine.a" "$B/_deps/nuvio_libtorrent-build/libtorrent-rasterbar.a" -static-libstdc++ -Wl,--gc-sections -Wl,--version-script="$B/exports.map" -Wl,--strip-all -Wl,-soname,libsbengine.so -o "$OUT"
-  SCRUB "$OUT"; ls -l "$OUT"; exit 0 ;;
 esac
 TC="$W/tc-$TARGET"; mkdir -p "$TC"
 printf '#!/bin/sh\nexec "%s" cc %s "$@"\n' "$ZIG" "$ZT" > "$TC/cc"; printf '#!/bin/sh\nexec "%s" c++ %s "$@"\n' "$ZIG" "$ZT" > "$TC/c++"
@@ -90,7 +79,8 @@ LT="$B/_deps/nuvio_libtorrent-build/libtorrent-rasterbar.a"
 if [ "$TARGET" = webos ]; then
   echo '{ global: sbe_get; local: *; };' > "$TC/exports.map"
   "$TC/c++" -std=c++20 -Os -fPIC $FL -shared -I"$SRC/include" -I"$ROOT/src" "$ROOT/tools/engine/sbengine.cpp" \
-    "$B/libnuvio_engine.a" "$LT" -Wl,--gc-sections -Wl,--version-script="$TC/exports.map" -Wl,--strip-all -Wl,-soname,libsbengine.so -lpthread -o "$OUT"
+    "$B/libnuvio_engine.a" "$LT" -Wl,--gc-sections -Wl,-T,"$ROOT/tools/webos-relocs.ld" -Wl,--version-script="$TC/exports.map" -Wl,--strip-all -Wl,-soname,libsbengine.so -lpthread -o "$OUT"
+  python3 "$ROOT/tools/relocs-check.py" "$OUT"   # (webOS 3 starts it only with them together)
 else
   "$TC/c++" -std=c++20 -Os $FL -shared -I"$SRC/include" -I"$ROOT/src" "$ROOT/tools/engine/sbengine.cpp" \
     "$B/libnuvio_engine.a" "$LT" "${SSLLIB[@]}" -framework Security -framework CoreFoundation -framework SystemConfiguration \

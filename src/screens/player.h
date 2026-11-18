@@ -17,6 +17,7 @@ void player_close(void);
 int  player_waiting(void);
 /* "Play the best stream automatically": the title art and the wait line at once, Back cancels, the pick plays */
 void player_choose_best(const char *type, const char *id, const char *vid);
+void player_cast_best(const char *type, const char *id, const char *vid, double pos); /* a phone's playbest: the same choice, then from pos (0: from the start) */
 int  player_open(void);
 int  player_nerd_lines(char (*out)[120], int max); /* Stats for nerds: what plays and how */
 int  player_art_full(void);
@@ -46,4 +47,11 @@ int  player_paused(void);
 void player_next_subs(const char *const *urls, const char *const *langs, int n);
 void player_next_art(const char *name, const char *poster, const char *bg, const char *logo); /* the next play's title and pictures while its details load (a phone's) */
 void player_play_at(const Stream *s, const char *type, const char *id, const char *vid, double pos);
+void player_title_hint(const Item *it);
+void player_quiet_next(void);
+void player_adopt_next(const char *src, float x, float y, float w, float h, float radius); /* the next play is the preview playing in that box: taken as it plays, grown to the screen */
+int player_page_morphing(void); /* a preview growing to the screen or back into its box: the page under it is still, drawn once */
+float player_page_alpha(void);  /* the page under the player: faded as a preview grows */
+void player_zap_begin(void);   /* switching channels full screen: the picture fades to black until the next one runs */
+void player_zap_end(void);     /* the switch found nothing: the old picture fades back */   /* the next play is a switch of channel: no art while it loads (the corner pill says it) */ /* a channel's name and pictures from its card, until its details come */
 #endif

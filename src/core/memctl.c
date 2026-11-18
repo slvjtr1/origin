@@ -11,7 +11,7 @@
 #if defined(SB_MEMCTL_TEST)
 #include "memctl_test_shim.h" /* (tests/host: a stand-in for the C library's calls, to run the worker on any computer) */
 #define SB_TRIM 1
-#elif defined(__GLIBC__) && !defined(SB_ANDROID)
+#elif defined(__GLIBC__)
 #include <malloc.h>
 #define SB_TRIM 1
 #endif

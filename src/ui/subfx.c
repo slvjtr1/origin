@@ -1,5 +1,6 @@
 /* The subtitles' edge and shadow: see subfx.h */
 #include "ui/subfx.h"
+#include "ui/subfonts.h"
 #include "core/store.h"
 #include "ui/text.h"
 #include <math.h>
@@ -16,8 +17,7 @@ void subfx_read(SubFx *fx, int px) {
   fx->shadow = !strcmp(store_get("subsShadow", "true"), "true");
   fx->sa = SA[lvl("subsShadowStrength", "2", 1, 4) - 1];
   fx->srings = lvl("subsShadowSoft", "1", 0, 2); fx->sblur = SB[fx->srings] * px;
-  int face = lvl("subsFont", "0", 0, TEXT_NFACES); fx->wt = (!strcmp(store_get("subsBold", "true"), "true") ? 800 : 600) | TEXT_FACE(face);
-  float lf = (float)atoi(store_get("subsPos", "6")) / 100; fx->lift = lf < SUBFX_LIFT_MIN ? SUBFX_LIFT_MIN : lf > SUBFX_LIFT_MAX ? SUBFX_LIFT_MAX : lf;
+  fx->wt = subfont_w(!strcmp(store_get("subsBold", "true"), "true") ? 800 : 600); /* (in the viewer's subtitle fonts: ui/subfonts.c) */
   fx->sdist = SD[lvl("subsShadowDist", "2", 1, 3) - 1] * px;
 }
 /* the outline's copies: along the axes at its width, the diagonals nearer in (as the player always drew it); a thick

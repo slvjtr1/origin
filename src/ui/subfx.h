@@ -16,13 +16,8 @@ typedef struct {
   float sa, sblur, sdist;  /* its strength (0..1 at the core), softness and distance in px */
   int srings;              /* rings of copies for the softness: 0 sharp, 1 soft, 2 very soft */
   int wt;                  /* the text weight to draw with: bold or not, and the chosen font (TEXT_FACE) */
-  float lift;              /* the line raised (or lowered, below 0) by this part of the screen's height */
 } SubFx;
 
-/* the height's limits and step (a part of the screen's height; 0 where the player has always put them) */
-#define SUBFX_LIFT_MIN (-0.06f)
-#define SUBFX_LIFT_MAX 0.30f
-#define SUBFX_LIFT_STEP 0.02f
 /* the settings now, for a line px tall (the shadow grows with the line; the outline keeps its width, as before) */
 void subfx_read(SubFx *fx, int px);
 /* paints the layers: fn(ud, dx, dy, colour) draws the line moved by dx, dy in that colour; fill: the line's own colour */

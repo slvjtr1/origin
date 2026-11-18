@@ -10,6 +10,7 @@ void  btr_handover(void);     /* play pressed: the player's art comes over the t
 int   btr_handing(void);
 void  btr_key(int arrow);     /* any key or pointer action (arrow: a move to another title) */
 void  btr_release(void);      /* the player is about to load: the decoder is let go now */
+int   btr_owns(void);         /* the decoder holds the trailer */
 int   btr_under(void);        /* the video shows through: the window is cleared transparent, the backdrop over it */
 int btr_playing(void);  /* a background trailer is up and playing (not on its way out) */
 unsigned btr_hold_gen(void); /* a key stopped the trailer: the backdrop generation it stopped at (that one is not shown again), else 0 */

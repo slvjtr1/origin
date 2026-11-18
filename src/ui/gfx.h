@@ -45,7 +45,9 @@ void gfx_rrect_v(float x, float y, float w, float h, float radius, uint32_t top,
 void gfx_rrect_h(float x, float y, float w, float h, float radius, uint32_t left, uint32_t right);
 void gfx_ring(float x, float y, float w, float h, float radius, float thickness, uint32_t color);  /* outline, drawn inside */
 void gfx_ring_out(float x, float y, float w, float h, float radius, float thickness, uint32_t color); /* outline outside the rect */
+void gfx_hole(float x, float y, float w, float h, float r, float a); /* erase to see-through (the video plane shows), a = how much */
 void gfx_shadow(float x, float y, float w, float h, float radius, float blur, uint32_t color);
+void gfx_mirror_span(float *x0, float *x1); /* a screen span where a mirrored page really puts it */
 void gfx_glare_at(float x, float y, float w, float h, float r, float pos, uint32_t c, float shift); /* the glint moved along the top */
 void gfx_glare(float x, float y, float w, float h, float radius, float pos, uint32_t color); /* a soft slanted band of light across a rounded box; pos 0..1 from its left edge to its right */
 void gfx_shadow_under(float x, float y, float w, float h, float r, float blur, uint32_t c, float bx, float by, float bw, float bh, float br); /* the shadow of an opaque box drawn over it */
@@ -109,5 +111,5 @@ void gfx_fill_report(char *out, int cap); /* SB_FILL=1: the screen area drawn pe
 /* a radial glow (the box gx,gy,gw,gh) seen only inside the rounded box x,y,w,h: glows in a rounded picture keep its corners */
 void gfx_glow_round(float gx, float gy, float gw, float gh, uint32_t c, float x, float y, float w, float h, float r);
 GLuint gfx_radial_tex(void);     /* a soft disc, alpha only, 128x128: glows and vignettes as one textured quad */   /* milliseconds spent in buffer uploads + draw calls since the last reset */
-extern int gfx_lite; /* 1: the light drawing of Reduce for old TVs (Google TV): no soft shadows, glass drawn flat */
+extern int gfx_lite; /* 1: a light drawing: no soft shadows, glass drawn flat (0 on webOS) */
 #endif

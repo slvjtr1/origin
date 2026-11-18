@@ -23,12 +23,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
-#ifdef SB_ANDROID
-#include "platform/android/android.h"
-#define PKG_SUF ".apk"      /* Android TV: <appid>_<x.y.z>.apk, installed by Android's own installer */
-#else
 #define PKG_SUF "_arm.ipk"
-#endif
 #ifndef SB_APP_ID
 #define SB_APP_ID "tv.stremioorigin.app"
 #endif
@@ -56,9 +51,6 @@ static double now_ms(void) { struct timespec t; clock_gettime(CLOCK_REALTIME, &t
 /* "1.0.0" from appinfo.json beside the binary (the package), or pkg/ for the Mac preview */
 static void read_current(void) {
   if (U.read) return; U.read = 1;
-#if defined(SB_ANDROID) && defined(SB_VERSION)
-  snprintf(U.cur, sizeof U.cur, "%s", SB_VERSION); return; /* (the APK carries its version: there is no appinfo.json beside it) */
-#endif
   const char *cands[2] = { "%s/../appinfo.json", "%s/../pkg/appinfo.json" };
   for (int i = 0; i < 2 && !U.cur[0]; i++) {
     char p[1200]; snprintf(p, sizeof p, cands[i], plat_asset_dir());
@@ -126,28 +118,26 @@ static int is_fix(const char *v, const char *cur) {
   return a1 == a2 && b1 == b2 && c1 > c2;
 }
 #define QUIET_IDLE 90.0f /* seconds with no key pressed */
+static int lastSt; /* the list's HTTP answer (0: none), for the log when it could not be read */
 static void done(const Rel *best, int manual) {
   char at[32]; snprintf(at, sizeof at, "%.0f", now_ms()); store_set("updAt", at);
   if (best && U.cur[0] && ver_cmp(best->ver, U.cur) > 0) {
     U.avail = *best; U.has = 1; U.state = UPD_AVAIL; store_set("updVer", best->ver);
     fprintf(stderr, "[update] %s available (running %s)\n", best->ver, U.cur);
     quiet = !manual && !best->beta && is_fix(best->ver, U.cur) && !getenv("SB_UPD_NOQUIET"); /* (a beta never installs itself: it is asked for) */
-#ifdef SB_ANDROID
-    quiet = 0; /* (Android's installer asks first: every update is the notice) */
-#endif
     if (quiet) fprintf(stderr, "[update] %s is a fix: installs itself when the TV is left alone\n", best->ver);
     else if (!manual) { if (player_open()) pillPend = 1; else pill_show(); } /* (never over a film: after it) */
   } else {
     int none = best || reached;
     U.has = 0; U.state = none ? UPD_NONE : UPD_ERROR; store_remove("updVer");
-    fprintf(stderr, "[update] %s\n", none ? "up to date" : "could not check");
+    if (none) fprintf(stderr, "[update] up to date\n"); else if (lastSt > 0) fprintf(stderr, "[update] could not check (HTTP %d%s)\n", lastSt, lastSt == 200 ? ", not a release list" : ""); else fprintf(stderr, "[update] could not check (no answer: offline, no name lookup or too slow)\n");
     if (manual) toast(T(none ? "You have the latest version" : "Could not check for updates"), 2000, NULL);
     if (!none && U.started) nextAt = app_now() + 600; /* no answer (the network not up yet, the site away): again in 10 minutes */
   }
   changed();
 }
 static void on_manifest(int st, const unsigned char *body, size_t len, void *ud) {
-  (void)len; int manual = (int)(size_t)ud; Rel r; memset(&r, 0, sizeof r); int ok = 0;
+  (void)len; int manual = (int)(size_t)ud; Rel r; memset(&r, 0, sizeof r); int ok = 0; lastSt = st;
   cJSON *m = st == 200 ? cJSON_Parse((const char *)body) : NULL; if (cJSON_IsObject(m)) reached = 1;
   cJSON *v = cJSON_GetObjectItemCaseSensitive(m, "version"), *u = cJSON_GetObjectItemCaseSensitive(m, "ipkUrl"), *h = cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(m, "ipkHash"), "sha256");
   if (cJSON_IsString(v) && cJSON_IsString(u) && cJSON_IsString(h) && *v->valuestring && *u->valuestring && *h->valuestring) {
@@ -163,7 +153,7 @@ static void on_manifest(int st, const unsigned char *body, size_t len, void *ud)
 }
 static int is_hex64(const char *s) { for (int i = 0; i < 64; i++) if (!((s[i] >= '0' && s[i] <= '9') || (s[i] >= 'a' && s[i] <= 'f'))) return 0; return !s[64]; }
 static void on_releases(int st, const unsigned char *body, size_t len, void *ud) {
-  (void)len; int manual = (int)(size_t)ud; Rel best; int has = 0; memset(&best, 0, sizeof best);
+  (void)len; int manual = (int)(size_t)ud; Rel best; int has = 0; memset(&best, 0, sizeof best); lastSt = st;
   cJSON *list = st == 200 ? cJSON_Parse((const char *)body) : NULL, *r, *a;
   const char *pre = SB_APP_ID "_"; size_t pl = strlen(pre);
   cJSON *arr = cJSON_IsArray(list) ? list : NULL; reached = arr != NULL; int beta = update_beta();
@@ -185,9 +175,6 @@ static void on_releases(int st, const unsigned char *body, size_t len, void *ud)
     }
   }
   cJSON_Delete(list);
-#ifdef SB_ANDROID
-  if (!has) { done(NULL, manual); return; } /* (the site's manifest names the TV's package only) */
-#endif
   if (has) done(&best, manual); else { const char *mf = getenv("SB_UPD_MAN"); net_get_timeout(mf ? mf : UPD_MAN, 15000, on_manifest, ud); } /* GitHub away or out of requests: the site (SB_UPD_MAN: development) */
 }
 int update_beta(void) { return !strcmp(store_get("betaUpdates", "false"), "true"); }
@@ -242,7 +229,7 @@ static void on_install(const char *payload, void *ud) {
     else toast(noChannel ? T("Install it from the Homebrew Channel") : T("The update failed"), 2500, NULL);
     changed(); cJSON_Delete(j); return;
   }
-  if (cJSON_IsString(st) && st->valuestring) { char pc[16] = ""; if (cJSON_IsNumber(pg)) snprintf(pc, sizeof pc, " %d%%", (int)(pg->valuedouble + 0.5)); snprintf(U.msg, sizeof U.msg, "%s%s", T(st->valuestring), pc); }
+  if (cJSON_IsString(st) && st->valuestring) { char pc[16] = ""; if (U.state != UPD_INSTALLING) { U.state = UPD_INSTALLING; fprintf(stderr, "[update] installing %s (the leave given)\n", U.avail.ver); } /* (the download that waited for the leave to install) */ if (cJSON_IsNumber(pg)) snprintf(pc, sizeof pc, " %d%%", (int)(pg->valuedouble + 0.5)); snprintf(U.msg, sizeof U.msg, "%s%s", T(st->valuestring), pc); }
   if (cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(j, "finished"))) { snprintf(U.msg, sizeof U.msg, "%s", T("Installed: the app opens again in a moment")); fprintf(stderr, "[update] installed %s\n", U.avail.ver); }
   changed(); cJSON_Delete(j);
 }
@@ -252,9 +239,6 @@ void update_install(void) {
   if (U.state == UPD_INSTALLING) return;
   U.state = UPD_INSTALLING; snprintf(U.msg, sizeof U.msg, "%s", T("Downloading…")); changed();
   fprintf(stderr, "[update] installing %s\n", U.avail.ver);
-#ifdef SB_ANDROID
-  android_cmd("install", U.avail.url, U.avail.sha, 0); return; /* Java downloads it, checks the SHA-256, opens the installer (update_tick shows its line) */
-#endif
   relaunch_arm();
   cJSON *p = cJSON_CreateObject(); cJSON_AddStringToObject(p, "ipkUrl", U.avail.url); cJSON_AddStringToObject(p, "ipkHash", U.avail.sha); cJSON_AddStringToObject(p, "id", SB_APP_ID); cJSON_AddTrueToObject(p, "subscribe");
   char *ps = cJSON_PrintUnformatted(p); cJSON_Delete(p);
@@ -343,13 +327,6 @@ void update_pill_draw(float setX) {
 void update_tick(float dt) {
   tween_tick(&U.pa, dt); tween_tick(&U.slide, dt); tween_tick(&U.dot, dt); sglass_tick(&U.glass, dt);
   plat_luna_pump();
-#ifdef SB_ANDROID
-  if (U.state == UPD_INSTALLING) { const char *m = android_update_status(); char tm[240];
-    if (m && *m) { const char *sp = strrchr(m, ' '); size_t n = sp ? strlen(sp) : 0; /* "Downloading the update… 42%": the words translated, the number as it is */
-      if (sp && n > 1 && sp[n - 1] == '%') { char pre[160]; snprintf(pre, sizeof pre, "%.*s", (int)(sp - m), m); snprintf(tm, sizeof tm, "%s %s", T(pre), sp + 1); } else snprintf(tm, sizeof tm, "%s", T(m));
-      if (strcmp(tm, U.msg)) { snprintf(U.msg, sizeof U.msg, "%s", tm); changed(); } }
-    if (m && (!strncmp(m, "The ", 4) || !strncmp(m, "Confirm", 7) || !strncmp(m, "Allow", 5))) { U.state = UPD_AVAIL; changed(); } } /* (failed, or the installer is up: Install can be pressed again) */
-#endif
   if (U.pf && !topNav.active) { U.pf = 0; U.hideAt = app_now() + 4; } /* the highlight left the top bar */
   if (U.pill && U.hideAt && app_now() >= U.hideAt) pill_hide();
   if (U.n.pend && !U.pill && U.pa.v <= 0.001f && !player_open()) { /* the other notice, once the capsule is back in */

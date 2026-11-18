@@ -56,7 +56,7 @@ static void draw(void) {
   float ty = y + P;
   text_draw(T("Share logs"), tx, ty, 40, 700, WHITE_A(255), -0.5f, tw, al); ty += text_line_height(40) + 14;
   const char *p = T("Scan the code and describe the issue.");
-  float plh = 26 * 1.4f; int pn = text_wrap_count(p, tw, 4, 26, 400, 0); text_draw_wrapped(p, tx, ty, tw, 4, 26, 400, WHITE_A(210), 0, al, plh); ty += pn * plh + 26;
+  float plh = 26 * 1.4f; if (C.state != -1) { int pn = text_wrap_count(p, tw, 4, 26, 400, 0); text_draw_wrapped(p, tx, ty, tw, 4, 26, 400, WHITE_A(210), 0, al, plh); ty += pn * plh + 26; } /* (failed: there is no code to scan, only the reason) */
   if (C.state == 1) { /* the code rises in; its letters stand apart, always left to right */
     float t = (float)(app_now() - C.doneAt), k = ease_q(t / 0.3f), w = text_width(C.out, 88, 700, 18);
     text_draw(T("Log code"), tx, ty, 22, 600, WHITE_A(150), 0.6f, tw, al);

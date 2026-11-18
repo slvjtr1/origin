@@ -6,10 +6,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <time.h>
 #include <pthread.h>
 #include <curl/curl.h>
 #include <SDL2/SDL.h>
-#if !defined(SB_MAC) && !defined(SB_ANDROID)
+#if !defined(SB_MAC)
 #include <dlfcn.h>
 #endif
 #include <sys/socket.h>
@@ -26,6 +27,7 @@ static CURLcode (*f_easy_setopt)(CURL *, CURLoption, ...);
 static CURLcode (*f_easy_perform)(CURL *);
 static CURLcode (*f_easy_getinfo)(CURL *, CURLINFO, ...);
 static void (*f_easy_cleanup)(CURL *);
+static void (*f_easy_reset)(CURL *); /* (may be missing on a very old libcurl: then a handle per fetch, as before) */
 static struct curl_slist *(*f_slist_append)(struct curl_slist *, const char *);
 static void (*f_slist_free_all)(struct curl_slist *);
 static CURLcode (*f_global_init)(long);
@@ -42,7 +44,7 @@ static void share_setup(void) {
   for (int i = 0; i <= CURL_LOCK_DATA_LAST; i++) pthread_mutex_init(&shMu[i], NULL);
   f_share_setopt(share, CURLSHOPT_LOCKFUNC, sh_lock); f_share_setopt(share, CURLSHOPT_UNLOCKFUNC, sh_unlock);
   f_share_setopt(share, CURLSHOPT_SHARE, CURL_LOCK_DATA_DNS); f_share_setopt(share, CURLSHOPT_SHARE, CURL_LOCK_DATA_SSL_SESSION);
-#if defined(SB_ANDROID) || defined(SB_MAC)
+#if defined(SB_MAC)
   f_share_setopt(share, CURLSHOPT_SHARE, CURL_LOCK_DATA_CONNECT); /* (the curl built in: its shared pool is sound; the TV's own older one keeps its pools per worker) */
 #endif
 }
@@ -50,7 +52,7 @@ static void share_setup(void) {
 static const char *ua(void) { static char u[96]; if (!u[0]) { const char *d = plat_device_name(); snprintf(u, sizeof u, "Origin/%s (%s; native)", update_current(), strstr(d, "webOS") ? "webOS" : strstr(d, "Android") ? "Android TV" : "Mac"); } return u; }
 
 static int resolve(void) {
-#if defined(SB_MAC) || defined(SB_ANDROID) /* linked in, not looked up at run time */
+#if defined(SB_MAC)
   f_easy_init = curl_easy_init; f_easy_setopt = curl_easy_setopt; f_easy_perform = curl_easy_perform; f_easy_getinfo = curl_easy_getinfo;
   f_easy_cleanup = curl_easy_cleanup; f_slist_append = curl_slist_append; f_slist_free_all = curl_slist_free_all; f_global_init = curl_global_init; f_easy_reset = curl_easy_reset;
   f_share_init = curl_share_init; f_share_setopt = curl_share_setopt;
@@ -61,7 +63,7 @@ static int resolve(void) {
   if (!h) { fprintf(stderr, "[net] no libcurl: %s\n", dlerror()); return 0; }
 #define L(v, n) do { *(void **)(&v) = dlsym(h, n); if (!v) { fprintf(stderr, "[net] missing %s\n", n); return 0; } } while (0)
   L(f_easy_init, "curl_easy_init"); L(f_easy_setopt, "curl_easy_setopt"); L(f_easy_perform, "curl_easy_perform"); L(f_easy_getinfo, "curl_easy_getinfo");
-  L(f_easy_cleanup, "curl_easy_cleanup"); L(f_slist_append, "curl_slist_append"); L(f_slist_free_all, "curl_slist_free_all"); L(f_global_init, "curl_global_init");
+  L(f_easy_cleanup, "curl_easy_cleanup"); *(void **)(&f_easy_reset) = dlsym(h, "curl_easy_reset"); L(f_slist_append, "curl_slist_append"); L(f_slist_free_all, "curl_slist_free_all"); L(f_global_init, "curl_global_init");
 #undef L
   *(void **)(&f_easy_reset) = dlsym(h, "curl_easy_reset");
   *(void **)(&f_share_init) = dlsym(h, "curl_share_init"); *(void **)(&f_share_setopt) = dlsym(h, "curl_share_setopt"); /* (optional) */
@@ -195,6 +197,11 @@ static struct curl_slist *ts_pin(CURL *c, const char *url) {
   int port = h[l] == ':' ? atoi(h + l + 1) : !strncasecmp(url, "https", 5) ? 443 : 80; char e[320]; snprintf(e, sizeof e, "%s:%d:%s", host, port, ip);
   struct curl_slist *s = f_slist_append(NULL, e); if (s) f_easy_setopt(c, CURLOPT_RESOLVE, s); return s;
 }
+/* why a request failed, when it is a name that wasn't found (it said "no answer"); a .ts.net name stays out of the logs */
+static void log_fail(CURLcode rc, const char *url) {
+  if (rc != CURLE_COULDNT_RESOLVE_HOST || !url) return; const char *h = strstr(url, "://"); if (!h) return; h += 3;
+  size_t l = strcspn(h, "/?#"); const char *at = memchr(h, '@', l); if (at) { l -= (size_t)(at + 1 - h); h = at + 1; } l = strcspn(h, ":/?#"); if (!l || l > 255) return;
+  int ts = l > 7 && !strncasecmp(h + l - 7, ".ts.net", 7); if (ts) fprintf(stderr, "[net] couldn't look up a .ts.net address\n"); else fprintf(stderr, "[net] couldn't look up %.*s\n", (int)l, h); }
 /* each worker keeps its handle: curl then keeps the connections it opened (and their TLS sessions and DNS answers),
    and the next request to the same addon or API skips the handshake, the slowest part of a request on a TV */
 static CURL *handles[WORKERS];
@@ -219,7 +226,7 @@ static void perform(Req *r, int slot) {
   if (hs) f_easy_setopt(c, CURLOPT_HTTPHEADER, hs);
   CURLcode rc = f_easy_perform(c);
   long code = 0; f_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code);
-  r->status = rc == CURLE_OK ? (int)code : 0;
+  r->status = rc == CURLE_OK ? (int)code : 0; log_fail(rc, r->url);
   if (r->size) { char t[32]; int k = snprintf(t, sizeof t, "%.0f", r->total > 0 ? r->total : 0); free(r->body); mem_give(r->held); r->held = 0; r->cap = 0; r->body = (unsigned char *)strdup(t); r->len = r->body ? (size_t)k : 0; r->status = (int)code; } /* the server's answer even without a size (a 404 says why a film will not play); 0 = no answer */
   if (r->refused) r->status = 0; /* cut short for want of room: a failure, never half an answer */
   if (!kept) f_easy_cleanup(c); if (hs) f_slist_free_all(hs); if (pin) f_slist_free_all(pin);
@@ -277,7 +284,7 @@ static void *worker(void *arg) { plat_thread_background(5);
   }
   return NULL;
 }
-#if !defined(SB_MAC) && !defined(SB_ANDROID)
+#if !defined(SB_MAC)
 /* OpenSSL 1.0 (the TV's, under its libcurl) is safe across threads only with locks the app hands it: without them
    its shared tables were changed by two requests at once, and a long session ended in a crash inside it (a bad
    pointer in memcmp, called from libcrypto). 1.1 and later lock by themselves (no CRYPTO_num_locks to find): left as
@@ -306,7 +313,7 @@ static void ssl_locks(void) {
 int net_init(const char *ca) {
   (void)ua(); /* made once here, before any worker thread reads it */
   if (!resolve()) return 0;
-#if !defined(SB_MAC) && !defined(SB_ANDROID)
+#if !defined(SB_MAC)
   ssl_locks(); /* before the first request and the worker threads */
 #endif
   f_global_init(CURL_GLOBAL_ALL);
@@ -323,6 +330,10 @@ static void push_req(Req *r) { /* under mu */
   if (r->timeoutMs > 20000) { if (slowTail) slowTail->next = r; else slowQ = r; slowTail = r; pthread_cond_signal(&slowCv); }
   else { if (queueTail) queueTail->next = r; else queue = r; queueTail = r; pthread_cond_signal(&cv); }
 }
+/* one that is waited on as the user types (search suggestions): ahead of everything queued */
+unsigned net_get_first(const char *url, NetCb cb, void *ud) {
+  Req *r = calloc(1, sizeof *r); r->url = strdup(url); r->cb = cb; r->ud = ud;
+  pthread_mutex_lock(&mu); r->id = nextId++; r->next = queue; queue = r; if (!queueTail) queueTail = r; npending++; pthread_cond_signal(&cv); pthread_mutex_unlock(&mu); return r->id; }
 static unsigned enqueue_x(const char *url, const char *hdr, const char *post, const char *ctype, long timeoutMs, int size, NetCb cb, void *ud) {
   Req *r = calloc(1, sizeof *r);
   if (r) { r->url = strdup(url ? url : ""); r->hdr = hdr ? strdup(hdr) : NULL; r->post = post ? strdup(post) : NULL; r->ctype = ctype ? strdup(ctype) : NULL; }
@@ -404,6 +415,8 @@ void net_pump(void) {
   }
 }
 unsigned char *net_fetch_sync(const char *url, size_t *len, int *status, int timeoutMs) { return net_fetch_sync_hdr(url, NULL, len, status, timeoutMs); }
+static long fetchN, fetchNew; /* fetches, and the new connections they made (the rest reused one) */
+void net_fetch_stats(long *n, long *fresh) { *n = __atomic_load_n(&fetchN, __ATOMIC_RELAXED); *fresh = __atomic_load_n(&fetchNew, __ATOMIC_RELAXED); }
 unsigned char *net_fetch_sync_hdr(const char *url, const char *hdr, size_t *len, int *status, int timeoutMs) {
   Req r; memset(&r, 0, sizeof r); r.url = (char *)url;
   if (!f_easy_init) { *status = 0; *len = 0; return NULL; }
@@ -414,7 +427,9 @@ unsigned char *net_fetch_sync_hdr(const char *url, const char *hdr, size_t *len,
   f_easy_setopt(c, CURLOPT_CONNECTTIMEOUT_MS, 8000L); f_easy_setopt(c, CURLOPT_TIMEOUT_MS, (long)timeoutMs);
   f_easy_setopt(c, CURLOPT_USERAGENT, ua()); f_easy_setopt(c, CURLOPT_ACCEPT_ENCODING, "");
   if (caPath[0]) f_easy_setopt(c, CURLOPT_CAINFO, caPath);
-  CURLcode rc = f_easy_perform(c); long code = 0; f_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code); f_easy_cleanup(c); if (hs) f_slist_free_all(hs); if (pin) f_slist_free_all(pin);
+  CURLcode rc = f_easy_perform(c); long code = 0, nc = 0; f_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code); f_easy_getinfo(c, CURLINFO_NUM_CONNECTS, &nc);
+  __atomic_add_fetch(&fetchN, 1, __ATOMIC_RELAXED); if (nc > 0) __atomic_add_fetch(&fetchNew, 1, __ATOMIC_RELAXED);
+  f_easy_cleanup(c); if (hs) f_slist_free_all(hs); if (pin) f_slist_free_all(pin); log_fail(rc, url);
   mem_give(r.held); /* (counted while it came; the caller's from here) */
   *status = rc == CURLE_OK && !r.refused ? (int)code : 0; *len = r.len;
   if (*status != 200 && *status != 206) { free(r.body); *len = 0; return NULL; }
@@ -429,13 +444,13 @@ int net_stream_sync(const char *url, int timeoutMs, NetSink sink, void *ud) {
   if (!f_easy_init && !resolve()) return 0;
   CURL *c = f_easy_init(); if (!c) return 0;
   StreamCtx x = { sink, ud, 0 };
-  f_easy_setopt(c, CURLOPT_URL, url); f_easy_setopt(c, CURLOPT_WRITEFUNCTION, stream_data); f_easy_setopt(c, CURLOPT_WRITEDATA, &x);
+  f_easy_setopt(c, CURLOPT_URL, url); f_easy_setopt(c, CURLOPT_WRITEFUNCTION, stream_data); f_easy_setopt(c, CURLOPT_WRITEDATA, &x); struct curl_slist *pin = ts_pin(c, url);
   f_easy_setopt(c, CURLOPT_XFERINFOFUNCTION, stream_poll); f_easy_setopt(c, CURLOPT_XFERINFODATA, &x); f_easy_setopt(c, CURLOPT_NOPROGRESS, 0L);
   f_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L); f_easy_setopt(c, CURLOPT_PROTOCOLS, WEB_ONLY); f_easy_setopt(c, CURLOPT_REDIR_PROTOCOLS, WEB_ONLY); f_easy_setopt(c, CURLOPT_MAXREDIRS, 8L); f_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
   f_easy_setopt(c, CURLOPT_CONNECTTIMEOUT_MS, 8000L); f_easy_setopt(c, CURLOPT_TIMEOUT_MS, (long)timeoutMs);
   f_easy_setopt(c, CURLOPT_USERAGENT, ua()); /* no Accept-Encoding: the bytes counted are the bytes that crossed the line */
   if (caPath[0]) f_easy_setopt(c, CURLOPT_CAINFO, caPath);
-  CURLcode rc = f_easy_perform(c); long code = 0; f_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code); f_easy_cleanup(c);
+  CURLcode rc = f_easy_perform(c); long code = 0; f_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code); f_easy_cleanup(c); if (pin) f_slist_free_all(pin); log_fail(rc, url);
   if (x.stopped) return -1;
   return rc == CURLE_OK ? (int)code : 0;
 }
@@ -451,7 +466,7 @@ int net_pipe_sync(const char *url, const char *headers, int head, NetHdrSink hs,
   PipeCtx x = { hs, sink, ud, 0 }; struct curl_slist *sl = NULL;
   char *hd = headers ? strdup(headers) : NULL; if (headers && !hd) { f_easy_cleanup(c); return 0; }
   for (char *h = hd, *nl; h && *h; h = nl ? nl + 1 : NULL) { nl = strchr(h, '\n'); if (nl) *nl = 0; if (*h) sl = f_slist_append(sl, h); }
-  f_easy_setopt(c, CURLOPT_URL, url); f_easy_setopt(c, CURLOPT_HEADERFUNCTION, pipe_hdr); f_easy_setopt(c, CURLOPT_HEADERDATA, &x);
+  f_easy_setopt(c, CURLOPT_URL, url); f_easy_setopt(c, CURLOPT_HEADERFUNCTION, pipe_hdr); f_easy_setopt(c, CURLOPT_HEADERDATA, &x); struct curl_slist *pin = ts_pin(c, url);
   f_easy_setopt(c, CURLOPT_WRITEFUNCTION, pipe_data); f_easy_setopt(c, CURLOPT_WRITEDATA, &x);
   f_easy_setopt(c, CURLOPT_XFERINFOFUNCTION, pipe_poll); f_easy_setopt(c, CURLOPT_XFERINFODATA, &x); f_easy_setopt(c, CURLOPT_NOPROGRESS, 0L);
   f_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L); f_easy_setopt(c, CURLOPT_PROTOCOLS, WEB_ONLY); f_easy_setopt(c, CURLOPT_REDIR_PROTOCOLS, WEB_ONLY); f_easy_setopt(c, CURLOPT_MAXREDIRS, 8L); f_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
@@ -462,14 +477,14 @@ int net_pipe_sync(const char *url, const char *headers, int head, NetHdrSink hs,
   if (head) f_easy_setopt(c, CURLOPT_NOBODY, 1L);
   if (sl) f_easy_setopt(c, CURLOPT_HTTPHEADER, sl);
   if (caPath[0]) f_easy_setopt(c, CURLOPT_CAINFO, caPath);
-  CURLcode rc = f_easy_perform(c); long code = 0; f_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code); f_easy_cleanup(c); if (sl) f_slist_free_all(sl); free(hd);
+  CURLcode rc = f_easy_perform(c); long code = 0; f_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &code); f_easy_cleanup(c); if (sl) f_slist_free_all(sl); free(hd); if (pin) f_slist_free_all(pin); log_fail(rc, url);
   if (x.stopped) return -1;
   return rc == CURLE_OK ? (int)code : 0;
 }
 
 /* ---- ranged reads ---------------------------------------------------------------------------- */
-struct NetRange { CURL *c; };
-typedef struct { unsigned char *buf; long len, got; int status, isRange; long long reqStart, crStart, total; int norange; } RangeCtx;
+struct NetRange { CURL *c; char *orig, *eff; int noDirect; }; /* eff: where orig led (its redirects followed once), asked directly after */
+typedef struct { unsigned char *buf; long len, got, extra; int status, isRange; long long reqStart, crStart, total; int norange; } RangeCtx;
 static size_t range_hdr(char *p, size_t s, size_t n, void *ud) {
   RangeCtx *r = ud; size_t l = s * n; char line[512]; size_t k = l < sizeof line - 1 ? l : sizeof line - 1; memcpy(line, p, k); line[k] = 0;
   int code; if (sscanf(line, "HTTP/%*s %d", &code) == 1) { r->status = code; r->crStart = -1; } /* each redirect hop starts again */
@@ -484,35 +499,101 @@ static size_t range_data(char *p, size_t s, size_t n, void *ud) {
   if (r->status >= 300 && r->status < 400) return add;                    /* a redirect's body */
   if (r->status == 200 && r->isRange) { r->norange = 1; return 0; }       /* the server ignored the Range */
   if (r->status == 206 && r->crStart >= 0 && r->crStart != r->reqStart) { r->norange = 1; return 0; } /* another part than asked */
-  long need = r->len - r->got; if (need <= 0) return 0;
-  long take = (long)add < need ? (long)add : need;
-  memcpy(r->buf + r->got, p, take); r->got += take;
-  return r->got >= r->len ? 0 : add;                                      /* had what was asked: stop (a 200 for the whole file must not keep downloading) */
+  long need = r->len - r->got, take = (long)add < need ? (long)add : need; if (take < 0) take = 0;
+  if (take) { memcpy(r->buf + r->got, p, take); r->got += take; }
+  if (r->status == 206) { r->extra += (long)add - take; return r->extra > 65536 ? 0 : add; } /* the part asked for: read to its end, so the connection is kept for the next one (stopping it short closed it: a new TLS handshake for every read, seconds each on a TV); a server sending far past it is stopped */
+  return r->got >= r->len ? 0 : add;                                      /* a 200 for the whole file: stopped once it has what was asked */
 }
 NetRange *net_range_new(void) { if (!f_easy_init && !resolve()) return NULL; NetRange *r = calloc(1, sizeof *r); r->c = f_easy_init(); if (!r->c) { free(r); return NULL; } return r; }
-void net_range_free(NetRange *r) { if (!r) return; if (r->c) f_easy_cleanup(r->c); free(r); }
-int net_range_get(NetRange *h, const char *url, long long start, long len, unsigned char **out, long *got, long long *total, int *httpStatus, int timeoutMs) {
+void net_range_free(NetRange *r) { if (!r) return; if (r->c) f_easy_cleanup(r->c); free(r->orig); free(r->eff); free(r); }
+static int range_once(NetRange *h, const char *url, long long start, long len, unsigned char **out, long *got, long long *total, int *httpStatus, int timeoutMs) {
   *out = NULL; *got = 0; if (total) *total = -1; if (httpStatus) *httpStatus = 0;
   if (!h || len <= 0) return NR_NET;
   RangeCtx r; memset(&r, 0, sizeof r); r.buf = malloc(len); if (!r.buf) return NR_NET; r.len = len; r.total = -1; r.crStart = -1; r.reqStart = start;
   r.isRange = start > 0; /* asked from past the start: a 200 means no Range support */
   char rg[64]; snprintf(rg, sizeof rg, "%lld-%lld", start, start + len - 1);
   CURL *c = h->c;
-  f_easy_setopt(c, CURLOPT_URL, url); f_easy_setopt(c, CURLOPT_RANGE, rg);
+  f_easy_setopt(c, CURLOPT_URL, url); f_easy_setopt(c, CURLOPT_RANGE, rg); struct curl_slist *pin = ts_pin(c, url);
   f_easy_setopt(c, CURLOPT_HEADERFUNCTION, range_hdr); f_easy_setopt(c, CURLOPT_HEADERDATA, &r);
   f_easy_setopt(c, CURLOPT_WRITEFUNCTION, range_data); f_easy_setopt(c, CURLOPT_WRITEDATA, &r);
   f_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L); f_easy_setopt(c, CURLOPT_PROTOCOLS, WEB_ONLY); f_easy_setopt(c, CURLOPT_REDIR_PROTOCOLS, WEB_ONLY); f_easy_setopt(c, CURLOPT_MAXREDIRS, 5L); f_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
   f_easy_setopt(c, CURLOPT_CONNECTTIMEOUT_MS, 8000L); f_easy_setopt(c, CURLOPT_TIMEOUT_MS, (long)timeoutMs);
   f_easy_setopt(c, CURLOPT_USERAGENT, "Mozilla/5.0 (Web0S; Linux) Origin"); f_easy_setopt(c, CURLOPT_TCP_KEEPALIVE, 1L);
   if (caPath[0]) f_easy_setopt(c, CURLOPT_CAINFO, caPath);
-  CURLcode rc = f_easy_perform(c);
+  CURLcode rc = f_easy_perform(c); if (pin) { f_easy_setopt(c, CURLOPT_RESOLVE, (struct curl_slist *)NULL); f_slist_free_all(pin); } /* (a kept-alive handle: no list left behind it) */ log_fail(rc, url);
   if (httpStatus) *httpStatus = r.status;
   if (total) *total = r.total;
   if (r.norange) { free(r.buf); return NR_NORANGE; }
+  if (r.got > 0 && r.status == 0 && !strncmp(url, "file://", 7)) r.status = 206; /* (a file on the phone: no status, its range read as asked) */
   if (r.got > 0 && (r.status == 200 || r.status == 206)) { *out = r.buf; *got = r.got; return NR_OK; } /* full, or a server that cut the response: what came */
   free(r.buf);
   if (rc == CURLE_OPERATION_TIMEDOUT) return NR_TIMEOUT;
   if (r.status == 429 || r.status >= 500) return NR_BUSY;
   if (r.status >= 400) return NR_HTTP;
   return NR_NET;
+}
+/* a stream's address that redirects (an addon's or a debrid's link) is followed once; its reads then go straight to
+   where it led (each one through the redirect cost seconds: a file's subtitles read hundreds of small parts), and back
+   through the original when that stops answering (a link's token expired) */
+/* where a link led, shared by every handle (a few links): a new connection to the same stream reads straight there
+   instead of paying the redirect again (a debrid link: seconds each) */
+static struct { char *orig, *eff; } LED[8]; static int ledNext; static pthread_mutex_t ledMu = PTHREAD_MUTEX_INITIALIZER;
+static void led_put(const char *o, const char *e) { pthread_mutex_lock(&ledMu); int k = -1; for (int i = 0; i < 8; i++) if (LED[i].orig && !strcmp(LED[i].orig, o)) k = i; if (k < 0) { k = ledNext; ledNext = (ledNext + 1) % 8; }
+  char *a = strdup(o), *b = strdup(e); if (a && b) { free(LED[k].orig); free(LED[k].eff); LED[k].orig = a; LED[k].eff = b; } else { free(a); free(b); } pthread_mutex_unlock(&ledMu); }
+static void led_drop(const char *o) { pthread_mutex_lock(&ledMu); for (int i = 0; i < 8; i++) if (LED[i].orig && !strcmp(LED[i].orig, o)) { free(LED[i].orig); free(LED[i].eff); LED[i].orig = LED[i].eff = NULL; } pthread_mutex_unlock(&ledMu); }
+int net_led_known(const char *url) { pthread_mutex_lock(&ledMu); int k = 0; for (int i = 0; i < 8; i++) if (LED[i].orig && !strcmp(LED[i].orig, url)) k = 1; pthread_mutex_unlock(&ledMu); return k; }
+static void led_get(NetRange *h, const char *url) { if (h->eff && h->orig && !strcmp(h->orig, url)) return; pthread_mutex_lock(&ledMu);
+  for (int i = 0; i < 8; i++) if (LED[i].orig && !strcmp(LED[i].orig, url)) { char *a = strdup(LED[i].orig), *b = strdup(LED[i].eff); if (a && b) { free(h->orig); free(h->eff); h->orig = a; h->eff = b; } else { free(a); free(b); } break; }
+  pthread_mutex_unlock(&ledMu); }
+/* many byte ranges in one request (multipart/byteranges): parts[i] (malloc'd, or NULL when the answer lacked it) and
+   plen[i]. NR_NORANGE: the server doesn't answer several ranges at once (a 200, one part, an error for the form) */
+typedef struct { unsigned char *buf; long len, cap, max; int status; char ctype[200]; } MultiCtx;
+static size_t multi_hdr(char *p, size_t s, size_t n, void *ud) { MultiCtx *m = ud; size_t l = s * n; char line[512]; size_t k = l < sizeof line - 1 ? l : sizeof line - 1; memcpy(line, p, k); line[k] = 0;
+  int code; if (sscanf(line, "HTTP/%*s %d", &code) == 1) { m->status = code; m->ctype[0] = 0; m->len = 0; }
+  else if (!strncasecmp(line, "content-type:", 13)) { char *v = line + 13; while (*v == ' ') v++; size_t vl = strcspn(v, "\r\n"); if (vl >= sizeof m->ctype) vl = sizeof m->ctype - 1; memcpy(m->ctype, v, vl); m->ctype[vl] = 0; }
+  return l; }
+static size_t multi_data(char *p, size_t s, size_t n, void *ud) { MultiCtx *m = ud; size_t add = s * n; if (m->status != 206) return add; if (m->len + (long)add > m->max) return 0;
+  if (m->len + (long)add > m->cap) { long nc = (m->len + (long)add) * 2; if (nc > m->max) nc = m->max; unsigned char *q = realloc(m->buf, nc); if (!q) return 0; m->buf = q; m->cap = nc; } memcpy(m->buf + m->len, p, add); m->len += add; return add; }
+static unsigned char *mem_find(unsigned char *h, long hn, const char *nd, long nn) { for (long i = 0; i + nn <= hn; i++) if (h[i] == (unsigned char)nd[0] && !memcmp(h + i, nd, nn)) return h + i; return NULL; }
+int net_range_multi(NetRange *h, const char *url, const long long *st, const long *ln, int n, unsigned char **parts, long *plen, int *httpStatus, int timeoutMs) {
+  for (int i = 0; i < n; i++) { parts[i] = NULL; plen[i] = 0; } if (!h || n <= 0) return NR_NET; if (!h->noDirect) led_get(h, url);
+  int direct = h->eff && h->orig && !strcmp(h->orig, url); char *rg = malloc((size_t)n * 48 + 8); if (!rg) return NR_NET; rg[0] = 0; long want = 0;
+  for (int i = 0, o = 0; i < n; i++) { o += snprintf(rg + o, 48, "%s%lld-%lld", i ? "," : "", st[i], st[i] + ln[i] - 1); want += ln[i]; }
+  for (int pass = 0; pass < 2; pass++) {
+    MultiCtx m; memset(&m, 0, sizeof m); m.max = want + n * 1024L + 65536; CURL *c = h->c; /* (no reset: the handle keeps its shared TLS and DNS caches) */
+    f_easy_setopt(c, CURLOPT_URL, direct ? h->eff : url); f_easy_setopt(c, CURLOPT_RANGE, rg); struct curl_slist *pin = ts_pin(c, url);
+    f_easy_setopt(c, CURLOPT_HEADERFUNCTION, multi_hdr); f_easy_setopt(c, CURLOPT_HEADERDATA, &m); f_easy_setopt(c, CURLOPT_WRITEFUNCTION, multi_data); f_easy_setopt(c, CURLOPT_WRITEDATA, &m);
+    f_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L); f_easy_setopt(c, CURLOPT_MAXREDIRS, 5L); f_easy_setopt(c, CURLOPT_NOSIGNAL, 1L); f_easy_setopt(c, CURLOPT_CONNECTTIMEOUT_MS, 8000L); f_easy_setopt(c, CURLOPT_TIMEOUT_MS, (long)timeoutMs);
+    f_easy_setopt(c, CURLOPT_USERAGENT, "Mozilla/5.0 (Web0S; Linux) StremioOrigin"); f_easy_setopt(c, CURLOPT_TCP_KEEPALIVE, 1L); if (caPath[0]) f_easy_setopt(c, CURLOPT_CAINFO, caPath);
+    CURLcode rc = f_easy_perform(c); if (pin) { f_easy_setopt(c, CURLOPT_RESOLVE, (struct curl_slist *)NULL); f_slist_free_all(pin); }
+    if (httpStatus) *httpStatus = m.status;
+    if (direct && !pass && (rc != CURLE_OK || (m.status >= 400 && m.status != 416 && m.status != 429))) { free(m.buf); led_drop(url); free(h->eff); h->eff = NULL; direct = 0; continue; } /* (where the link led stopped answering: through the link again) */
+    if (m.status == 429 || m.status == 503) { free(m.buf); free(rg); return NR_BUSY; }
+    if (rc == CURLE_OPERATION_TIMEDOUT) { free(m.buf); free(rg); return NR_TIMEOUT; }
+    if (rc != CURLE_OK && !(rc == CURLE_WRITE_ERROR && m.status != 206)) { free(m.buf); free(rg); return NR_NET; }
+    const char *bd = strcasestr(m.ctype, "boundary="); if (m.status != 206 || !strcasestr(m.ctype, "multipart/byteranges") || !bd) { free(m.buf); free(rg); return m.status == 206 || m.status == 200 || m.status == 400 || m.status == 416 || m.status == 501 ? NR_NORANGE : m.status >= 400 ? NR_HTTP : NR_NET; }
+    char sep[96]; bd += 9; if (*bd == '"') bd++; size_t bl = strcspn(bd, "\";\r\n "); if (bl > 80) bl = 80; snprintf(sep, sizeof sep, "--%.*s", (int)bl, bd);
+    unsigned char *q = m.buf, *end = m.buf + m.len; long sl = (long)strlen(sep);
+    while ((q = mem_find(q, end - q, sep, sl))) { q += sl; if (q + 2 <= end && q[0] == '-' && q[1] == '-') break;
+      unsigned char *he = mem_find(q, end - q, "\r\n\r\n", 4); if (!he) break; long long a = -1, b = -1;
+      { char hd[1024]; long hl = he - q < (long)sizeof hd - 1 ? he - q : (long)sizeof hd - 1; memcpy(hd, q, hl); hd[hl] = 0; char *cr = strcasestr(hd, "content-range:"); if (cr) sscanf(cr + 14, " bytes %lld-%lld", &a, &b); }
+      unsigned char *d = he + 4; if (a < 0 || b < a || d + (b - a + 1) > end) { q = d; continue; }
+      for (int i = 0; i < n; i++) if (!parts[i] && st[i] >= a && st[i] <= b) { long take = (long)(b - st[i] + 1); if (take > ln[i]) take = ln[i]; parts[i] = malloc(take); if (parts[i]) { memcpy(parts[i], d + (st[i] - a), take); plen[i] = take; } } /* (a server may join neighbouring ranges into one part) */
+      q = d + (b - a + 1); }
+    free(m.buf); free(rg); int any = 0; for (int i = 0; i < n; i++) if (parts[i]) any = 1; return any ? NR_OK : NR_NORANGE; }
+  free(rg); return NR_NET; }
+int net_range_get(NetRange *h, const char *url, long long start, long len, unsigned char **out, long *got, long long *total, int *httpStatus, int timeoutMs) {
+  if (!h) return range_once(h, url, start, len, out, got, total, httpStatus, timeoutMs);
+  if (!h->noDirect) led_get(h, url); /* (learnt by another connection: straight there) */
+  if (h->noDirect && h->orig && strcmp(h->orig, url)) h->noDirect = 0; /* (another stream on this handle: learnt afresh) */
+  int direct = h->eff && h->orig && !strcmp(h->orig, url); struct timespec t0, t1; clock_gettime(CLOCK_MONOTONIC, &t0);
+  int rc = range_once(h, direct ? h->eff : url, start, len, out, got, total, httpStatus, timeoutMs);
+  if (direct && (rc == NR_HTTP || rc == NR_NET)) { fprintf(stderr, "[range] where the link led stopped answering (%d, HTTP %d): through the link again\n", rc, httpStatus ? *httpStatus : 0); char *was = h->eff; h->eff = NULL; direct = 0; led_drop(url); rc = range_once(h, url, start, len, out, got, total, httpStatus, timeoutMs);
+    if (rc == NR_OK || rc == NR_NORANGE) { char *e = NULL; f_easy_getinfo(h->c, CURLINFO_EFFECTIVE_URL, &e); if (e && was && !strcmp(e, was)) { h->noDirect = 1; fprintf(stderr, "[range] where the link leads answers only through it: read through the link from now on\n"); } } free(was); } /* (the same place again: not an expired token, it needs the link (a cookie, a referrer); never tried directly again for this stream) */
+  clock_gettime(CLOCK_MONOTONIC, &t1); double ms = (t1.tv_sec - t0.tv_sec) * 1e3 + (t1.tv_nsec - t0.tv_nsec) / 1e6; static double lastSaid;
+  if ((ms > 1500 || rc != NR_OK) && t1.tv_sec - lastSaid >= 1) { lastSaid = t1.tv_sec; long nc = 0; double tc = 0, ts = 0, tf = 0; f_easy_getinfo(h->c, CURLINFO_NUM_CONNECTS, &nc); f_easy_getinfo(h->c, CURLINFO_CONNECT_TIME, &tc); f_easy_getinfo(h->c, CURLINFO_APPCONNECT_TIME, &ts); f_easy_getinfo(h->c, CURLINFO_STARTTRANSFER_TIME, &tf);
+    fprintf(stderr, "[range] %.0f ms for %ld B at %lld, %s: %d (HTTP %d) · new connections %ld, connect %.0f ms, tls %.0f ms, first byte %.0f ms\n", ms, len, start, direct ? "direct" : "through the link", rc, httpStatus ? *httpStatus : 0, nc, tc * 1e3, ts * 1e3, tf * 1e3); }
+  if (!direct && !h->noDirect && (rc == NR_OK || rc == NR_NORANGE)) { char *e = NULL; f_easy_getinfo(h->c, CURLINFO_EFFECTIVE_URL, &e);
+    if (e && *e && strcmp(e, url)) { char *o = strdup(url), *f = strdup(e); if (o && f) { free(h->orig); free(h->eff); h->orig = o; h->eff = f; led_put(o, f); fprintf(stderr, "[range] the link redirects: read straight from where it led (%.0f ms through it)\n", ms); } else { free(o); free(f); } } }
+  return rc;
 }

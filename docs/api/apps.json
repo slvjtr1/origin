@@ -16,21 +16,23 @@
       "fullDescriptionUrl": "apps/tv.stremioorigin.app/full_description.html",
       "manifest": {
         "id": "tv.stremioorigin.app",
-        "version": "1.4.1",
+        "version": "1.5.0",
         "type": "native",
         "title": "Origin",
-        "appDescription": "Your own Stremio account and addons on your LG TV, in English or Arabic: artwork and full-screen trailers, the best stream in one press, styled subtitles, clean search. Unofficial.",
+        "appDescription": "Your own Stremio account and addons on your LG TV: artwork and full-screen trailers, the best stream in one press, Live TV, Trakt, styled subtitles, clean search. Unofficial.",
         "iconUri": "https://slvjtr1.github.io/origin/icon.png",
         "sourceUrl": "https://github.com/slvjtr1/origin",
         "rootRequired": false,
-        "ipkUrl": "https://github.com/slvjtr1/origin/releases/download/v1.4.1/tv.stremioorigin.app_1.4.1_arm.ipk",
+        "ipkUrl": "https://github.com/slvjtr1/origin/releases/download/v1.5.0/tv.stremioorigin.app_1.5.0_arm.ipk",
         "ipkHash": {
-          "sha256": "5b64a478cd51f21d219e8a42b9e3667cd8acf904323a4fb3183638a3cef43253"
+          "sha256": "96a801d0426cdb11d05b6b9e1105de97304faa27e29c05c9359d5e8e1995e3aa"
         },
         "notes": [
-          "Steadier Sources: A fault that could close the app when many addons answered at once, as on the first press of Sources, is fixed.",
-          "Lighter on your TV: Memory is kept within bounds while addons answer, and handed back without stalling the picture.",
-          "Plug in a drive, that is all: The USB check stops cleanly when the drive is pulled out, touches only its own files, and OK hides it."
+          "Live TV: Channels and sports from your live addons, with Favorites and Recent.",
+          "Trakt: What you watch tracked, watched marks, Continue Watching and Trakt rows on Home. Bring your own Client ID.",
+          "Seek previews: A picture of the film on the seek bar as you move through it, for debrid and direct links.",
+          "Chapters: The film's chapters on the seek bar and in the seek pill. Settings › Seek bar.",
+          "Tracks per show: The subtitles and audio you pick stay for the whole show."
         ]
       }
     }

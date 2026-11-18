@@ -14,6 +14,10 @@
 #include "screens/player.h"
 #include "platform/plat.h"
 #include "platform/mem.h"
+#include "core/best.h"
+#include "core/keys.h"
+#include "ui/widgets.h"
+#include <math.h>
 #include <SDL2/SDL.h>
 #include <pthread.h>
 #include <dirent.h>
@@ -23,10 +27,12 @@
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 
-#define NL 18
-static char lines[NL][2][120]; static int nlines;
+#define NL 26
+static char lines[NL][2][120]; static unsigned char kind[NL]; static int nlines; /* kind: 0 a row, 1 a section's name, 2 the buffer graph */
 static double cpuSum; static int cpuN, lastCalls, lastQuads; static Uint32 readAt;
 static volatile long long diskData, diskFree, diskTotal; static volatile int diskBusy; static Uint32 diskAt;
+#define BH 60
+static float bufHist[BH]; static int bufN, bufI; static float bufNow = -1; /* the seconds buffered ahead, once a second, the last minute */
 
 int nerds_on(void) { return !strcmp(store_get("nerdStats", "false"), "true"); }
 #define FR 240
@@ -56,10 +62,27 @@ static void *disk_job(void *a) {
 static const char *sz(long long b, char *o, size_t cap) { /* MB, or GB with a decimal from 10 GB */
   if (b >= 10240LL << 20) snprintf(o, cap, "%.1f GB", b / 1073741824.0); else snprintf(o, cap, "%lld MB", b >> 20); return o; }
 static void add(const char *k, const char *fmt, ...) {
-  if (nlines >= NL) return; snprintf(lines[nlines][0], 120, "%s", k);
+  if (nlines >= NL) return; kind[nlines] = 0; snprintf(lines[nlines][0], 120, "%s", k);
   va_list ap; va_start(ap, fmt); vsnprintf(lines[nlines][1], 120, fmt, ap); va_end(ap); nlines++;
 }
+static void head(const char *name) { if (nlines >= NL) return; kind[nlines] = 1; snprintf(lines[nlines][0], 120, "%s", name); lines[nlines][1][0] = 0; nlines++; }
+static void graph(void) { if (nlines >= NL) return; kind[nlines] = 2; lines[nlines][0][0] = lines[nlines][1][0] = 0; nlines++; }
+/* while something plays: what plays and from where first, the buffer's last minute, then the TV in a few lines */
+static void refresh_player(void) {
+  nlines = 0; head("PLAYBACK");
+  char pl[12][120]; int n = player_nerd_lines(pl, 12);
+  for (int i = 0; i < n; i++) { char *sp = strstr(pl[i], "  "); if (sp) { *sp = 0; add(pl[i], "%s", sp + 2); } else add("", "%s", pl[i]); }
+  double b = player_nerd_buffer(); bufNow = (float)b; if (b >= 0) { bufHist[bufI] = (float)b; bufI = (bufI + 1) % BH; if (bufN < BH) bufN++; graph(); }
+  head("THIS TV");
+  int rss, swp; plat_mem_self(&rss, &swp); int tot = plat_mem_total_mb(), fr = plat_mem_free_mb();
+  if (tot > 0) add("memory", "app %d MB  \xc2\xb7  %d MB free of %d MB", rss, fr, tot); else add("memory", "app %d MB  \xc2\xb7  %d MB free", rss, fr);
+  float fps, p50, p95, worst, late; frames_live(&fps, &p50, &p95, &worst, &late);
+  add("frames", "%.0f fps  \xc2\xb7  %.1f %% late  \xc2\xb7  worst %.0f ms", fps, late, worst); cpuSum = 0; cpuN = 0;
+  add("app", "%s", update_current());
+}
 static void refresh(void) {
+  if (player_open()) { refresh_player(); return; }
+  bufN = bufI = 0; bufNow = -1;
   nlines = 0;
   int rss, swp; plat_mem_self(&rss, &swp); int tot = plat_mem_total_mb(), fr = plat_mem_free_mb();
   char totS[24]; if (tot > 0) snprintf(totS, sizeof totS, "%d MB", tot); else snprintf(totS, sizeof totS, "?");
@@ -77,20 +100,36 @@ static void refresh(void) {
   static const char *SN[] = { "sign-in", "home", "discover", "library", "title", "similar", "search", "settings" };
   add("screen", "%s · %d requests", (unsigned)SCR < 8 ? SN[SCR] : "?", net_pending());
   Uint32 up = SDL_GetTicks() / 1000; add("app", "%s · up %u:%02u:%02u", update_current(), up / 3600, up / 60 % 60, up % 60);
-  if (player_open()) { char pl[6][120]; int n = player_nerd_lines(pl, 6);
-    for (int i = 0; i < n; i++) { char *sp = strstr(pl[i], "  "); if (sp) { *sp = 0; add(pl[i], "%s", sp + 2); } else add("", "%s", pl[i]); } }
 }
+/* the buffer's last minute as thin columns, the newest on the right, each coloured by how safe it was (20 s and more,
+   8 s and more, less); the figure now at the left, large */
+static uint32_t buf_col(float s) { return best_health_color(s >= 20 ? BEST_H_GOOD : s >= 8 ? BEST_H_FAIR : BEST_H_POOR); }
+#define GH 74.0f
+static void graph_draw(float x, float y, float w) {
+  char now[24]; snprintf(now, sizeof now, "%.0f s", bufNow > 0 ? bufNow : 0); uint32_t c = buf_col(bufNow);
+  text_draw("buffer", x, y + 4, 19, 600, WHITE_A(140), 0, 0, ALIGN_LEFT); text_draw(now, x, y + 30, 32, 800, c, -0.5f, 0, ALIGN_LEFT);
+  float gx = x + 120, gw = w - 120, gh = GH - 12, mx = 30; for (int i = 0; i < bufN; i++) if (bufHist[i] > mx) mx = bufHist[i];
+  gfx_rrect(gx, y + 4, gw, gh, 8, WHITE_A(10));
+  float cw = gw / BH; for (int i = 0; i < bufN; i++) { float v = bufHist[(bufI - bufN + i + BH) % BH], hh = fmaxf(2, (gh - 6) * v / mx);
+    gfx_rrect(gx + gw - (bufN - i) * cw + 1, y + 4 + gh - 3 - hh, fmaxf(1, cw - 2), hh, 1.5f, col_alpha(buf_col(v), i == bufN - 1 ? 1 : 0.62f)); }
+  { char m[16]; snprintf(m, sizeof m, "%.0f s", mx); text_draw(m, gx + 8, y + 7, 15, 600, WHITE_A(110), 0, 0, ALIGN_LEFT); } }
 void nerds_draw(void) {
-  if (!nerds_on()) return;
+  static float a; float want = nerds_on() ? 1 : 0; a += (want - a) * fminf(1, app_dt() * 12); if (want && a > 0.995f) a = 1; if (!want && a < 0.01f) { a = 0; return; } /* (in and out over a few frames, never a pop) */
   Uint32 now = SDL_GetTicks();
-  if (!diskBusy && (!diskAt || now - diskAt > 15000)) { diskAt = now; diskBusy = 1; diskData = diskData ? diskData : -1; pthread_t t; if (pthread_create(&t, NULL, disk_job, NULL)) diskBusy = 0; else pthread_detach(t); }
-  if (!readAt || now - readAt >= 1000) { readAt = now; refresh(); }
-  const float W = 560, LW = 120, PAD = 18, LH = 30; float h = PAD * 2 + 34 + nlines * LH, x = SB_W - 40 - W, y = 104;
-  int rtl = app_rtl(); if (rtl) x = 40;
-  if (player_open()) { x = rtl ? SB_W - 40 - W : 40; y = 40; } /* (in the player: the free top corner, away from its clock and its trays) */
-  gfx_rrect(x, y, W, h, 18, RGBA(8, 8, 12, 214)); gfx_ring(x, y, W, h, 18, 1, WHITE_A(36));
-  text_draw("STATS FOR NERDS", x + PAD, y + PAD, 17, 800, ACC3, 1.6f, 0, ALIGN_LEFT);
-  for (int i = 0; i < nlines; i++) { float ly = y + PAD + 34 + i * LH;
+  if (want && !diskBusy && (!diskAt || now - diskAt > 15000)) { diskAt = now; diskBusy = 1; diskData = diskData ? diskData : -1; pthread_t t; if (pthread_create(&t, NULL, disk_job, NULL)) diskBusy = 0; else pthread_detach(t); }
+  static int wasPlayer; int pl = player_open(); if (want && (!readAt || now - readAt >= 1000 || pl != wasPlayer)) { readAt = now; wasPlayer = pl; refresh(); }
+  const float PAD = 22, LH = 30, HH = 38; float W = pl ? 660 : 560, LW = pl ? 130 : 120, h = PAD * 2 + 34, x, y = pl ? 40 : 104;
+  for (int i = 0; i < nlines; i++) h += kind[i] == 1 ? HH : kind[i] == 2 ? GH + 10 : LH;
+  int rtl = app_rtl(); x = pl ? (rtl ? SB_W - 40 - W : 40) : (rtl ? 40 : SB_W - 40 - W); /* (in the player: the free top corner, away from its clock and its trays) */
+  gfx_opacity_push(a); gfx_offset_push(0, -10 * (1 - a));
+  gfx_shadow(x, y, W, h, 22, 30, BLACK_A(120)); gfx_rrect(x, y, W, h, 22, RGBA(10, 10, 16, 246)); gfx_ring(x, y, W, h, 22, 1, WHITE_A(36));
+  text_draw(pl ? "PLAYBACK INFO" : "STATS FOR NERDS", x + PAD, y + PAD, 17, 800, ACC3, 1.6f, 0, ALIGN_LEFT);
+  if (pl) key_hint(x + W - PAD, y + PAD + 10, K_BLUE, "Close", WHITE_A(150), 1);
+  float ly = y + PAD + 34;
+  for (int i = 0; i < nlines; i++) {
+    if (kind[i] == 1) { if (i) gfx_rect(x + PAD, ly + 8, W - 2 * PAD, 1, WHITE_A(26)); text_draw(lines[i][0], x + PAD, ly + 16, 14, 800, WHITE_A(120), 1.8f, 0, ALIGN_LEFT); ly += HH; continue; }
+    if (kind[i] == 2) { graph_draw(x + PAD, ly, W - 2 * PAD); ly += GH + 10; continue; }
     text_draw(lines[i][0], x + PAD, ly, 19, 600, WHITE_A(140), 0, LW - 8, ALIGN_LEFT);
-    text_draw(lines[i][1], x + PAD + LW, ly, 19, 500, WHITE_A(240), 0, W - 2 * PAD - LW, ALIGN_LEFT); }
+    text_draw(lines[i][1], x + PAD + LW, ly, 19, 500, WHITE_A(240), 0, W - 2 * PAD - LW, ALIGN_LEFT); ly += LH; }
+  gfx_offset_pop(); gfx_opacity_pop();
 }

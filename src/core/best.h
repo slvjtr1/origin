@@ -5,6 +5,7 @@
 #ifndef SB_BEST_H
 #define SB_BEST_H
 #include "core/stremio.h"
+#include <stdint.h>
 
 /* ---- what the TV can show and decode ---- */
 typedef struct { int maxRes, hdr, dv, av1, dts, truehd; } TvCaps;   /* dts: 1 only once this TV was seen playing DTS */
@@ -51,7 +52,14 @@ void best_audio_of(const char *label, char *out, size_t cap);
    "12.1 GB  ·  484 seeds"), the release's name (the file's, else the title's line most like one; may be empty), and
    the one thing that matters most on this TV (warn, may be empty; out: it won't play here at all). c NULL = the kept
    caps; mbps < 0 = the measured speed; durMin <= 0 = a film's */
-typedef struct { char facts[128], meta[96], rel[256], warn[160]; int out; } BestFacts;
+typedef struct { char facts[128], meta[96], rel[256], warn[160]; int out, health; } BestFacts; /* health: BEST_H_* */
+/* Source health (Settings > Playback, off by default): how a stream is likely to play here, from its size, its seeds
+   and the measured internet speed. 0 not known (no seeds named, nothing to go on) */
+enum { BEST_H_NONE = 0, BEST_H_GOOD, BEST_H_FAIR, BEST_H_POOR, BEST_H_OUT };
+int  best_health_on(void);
+const char *best_health_label(int h);   /* "Smooth", "May buffer", "Slow", "Won't play here"; "" for none */
+uint32_t best_health_color(int h);
+int  best_health(const Stream *s, double durMin); /* one stream, read as best_facts reads it */
 void best_facts(const Stream *s, const TvCaps *c, double mbps, double durMin, BestFacts *f);
 
 /* ---- choosing for Play ---- */

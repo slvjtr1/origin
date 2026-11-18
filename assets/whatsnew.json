@@ -1,10 +1,20 @@
 {
-  "version": "1.5.2",
+  "version": "1.5.3",
   "items": [
     {
+      "icon": "wn_new",
+      "title": "Resume at a glance",
+      "text": "The Play button says what it plays and how much is left, with a ring showing how far you got."
+    },
+    {
       "icon": "wn_av",
-      "title": "Faster playback start",
-      "text": "Debrid and direct streams start as soon as they are ready. Seek bar previews are made while the film plays. Settings > Playback > Load previews before playing brings back the wait."
+      "title": "Source health",
+      "text": "A coloured mark on each stream: smooth, may buffer or slow. Turn it on in Settings > Playback."
+    },
+    {
+      "icon": "wn_live",
+      "title": "Playback info",
+      "text": "Press the blue key while a film plays: the source, the file, its bitrate and a live graph of the buffer."
     }
   ]
 }

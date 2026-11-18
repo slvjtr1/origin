@@ -310,7 +310,22 @@ void best_facts(const Stream *s, const TvCaps *c, double mbps, double durMin, Be
   else if (p2p && sd >= 0 && sd < 8) snprintf(f->warn, sizeof f->warn, "%s", T("Few seeds: slow to start")); /* (how many is in its meta; a number here would need each language's plural forms) */
   else if (mute) snprintf(f->warn, sizeof f->warn, "%s", dts ? T("DTS sound: this TV can\xe2\x80\x99t play it") : T("This TV can\xe2\x80\x99t play this video\xe2\x80\x99s sound (DTS or TrueHD)"));
   else if (need > 0 && cap > 0 && need > cap) snprintf(f->warn, sizeof f->warn, "%s", T("Too heavy for your internet speed"));
+  /* its health: what will not play, then what will not start soon, then the bitrate against what the line (a torrent:
+     its swarm, about 0.8 Mbps a seed) carries, with half again to spare for smooth; nothing to go on: not said */
+  { int h = BEST_H_NONE;
+    if (f->out) h = BEST_H_OUT;
+    else if (unc) h = BEST_H_POOR;
+    else if (p2p) { if (sd < 0) h = BEST_H_NONE; else if (sd < 8) h = BEST_H_POOR; else if (need > 0 && cap > 0) h = cap >= need * 1.5 ? BEST_H_GOOD : cap >= need ? BEST_H_FAIR : BEST_H_POOR; else h = sd >= 40 ? BEST_H_GOOD : sd >= 15 ? BEST_H_FAIR : BEST_H_POOR; }
+    else if (need > 0 && line > 0) h = line >= need * 1.5 ? BEST_H_GOOD : line >= need ? BEST_H_FAIR : BEST_H_POOR;
+    else h = need > 60 ? BEST_H_FAIR : BEST_H_GOOD; /* (a cached debrid or direct file, the line never measured: only a very heavy one is in doubt) */
+    f->health = h; }
 }
+#ifndef SB_BEST_PURE
+int best_health_on(void) { return !strcmp(store_get("sourceHealth", "false"), "true"); }
+#endif
+const char *best_health_label(int h) { return h == BEST_H_GOOD ? T("Smooth") : h == BEST_H_FAIR ? T("May buffer") : h == BEST_H_POOR ? T("Slow") : h == BEST_H_OUT ? T("Won\xe2\x80\x99t play here") : ""; }
+uint32_t best_health_color(int h) { return h == BEST_H_GOOD ? 0xff3dd67cu : h == BEST_H_FAIR ? 0xfff2b53au : h == BEST_H_POOR ? 0xffff6b5eu : 0xff9a9aa4u; } /* (0xAARRGGBB: green, amber, coral, grey) */
+int best_health(const Stream *s, double durMin) { BestFacts f; best_facts(s, NULL, -1, durMin, &f); return f.health; }
 /* The TV's own resolution first (never above it), lower pictures only after it, and only among streams the line
    carries without buffering: a file's average bitrate (its size over the running time) plus 30% headroom must
    fit the speed measured when the setting was switched on. The first resolution with such a stream wins (its

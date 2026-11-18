@@ -56,6 +56,7 @@
 #include "core/prevsrc.h"
 #include "ui/subfonts.h"
 #include "ui/asssubs.h"
+#include "ui/nerds.h"
 
 /* ---- the stream's text, read for the info chips: resolution, HDR, audio ---- */
 static void lower(const char *s, char *out, size_t cap) { size_t i = 0; for (; s[i] && i + 1 < cap; i++) out[i] = (char)tolower((unsigned char)s[i]); out[i] = 0; }
@@ -2033,6 +2034,7 @@ void player_key(int k, int down) {
     int kind = k == K_SUBS ? 4 : 3; if (P.mode == 2 && P.tray.kind == kind) { close_tray(); return; }
     if (btn_index(k == K_SUBS ? "subs" : "aud") < 0) { show_osd(1); return; }
     if (P.mode == 2) close_tray(); show_osd(1); open_tray(kind); return; }
+  if (k == K_BLUE && P.mode != 6) { int on = !nerds_on(); store_set("nerdStats", on ? "true" : "false"); sound_play(SND_TOGGLE); fprintf(stderr, "[player] blue key: stats for nerds %s\n", on ? "on" : "off"); return; } /* (the blue key: the info panel over the film, on and off; many remotes have no Info key) */
   if (k == K_INFO) { if (P.mode == 2) close_tray(); else if (P.osd) hide_osd(); else show_osd(1); return; } /* Info: the controls and the title's lines, or away */
   if (P.mode == 2) { tray_key(k); return; }
   if (P.mode == 4) { dly_key(k); return; }
@@ -3170,7 +3172,10 @@ static void draw_srcs(float ix, float top, float W) {
       else {
         float mw = bf->meta[0] ? text_width(bf->meta, SD_PX, 600, 0) : 0; if (mw) text_draw(bf->meta, right, l1 + (LN - LD) / 2, SD_PX, 600, WHITE_A(185), 0, 0, ALIGN_RIGHT);
         text_draw(bf->facts[0] ? bf->facts : first, 22, l1, SN_PX, 700, bf->facts[0] ? ACC3 : WHITE_A(240), 0.2f, right - 22 - (mw ? mw + 24 : 0), ALIGN_LEFT);
-        char rl[300]; snprintf(rl, sizeof rl, "%s", bf->rel[0] ? bf->rel : bf->facts[0] ? first : st->addon); text_draw(rl, 22, l2, SD_PX, 400, WHITE_A(155), 0, RW - 44, ALIGN_LEFT); }
+        float hw = 0; if (best_health_on() && bf->health) { const char *hl = best_health_label(bf->health); uint32_t hc = best_health_color(bf->health); /* its health: a lit dot and the word, at the end of the release line */
+          hw = text_width(hl, SD_PX, 600, 0); float hx = RW - 22 - hw, cy = y + 16 + SN_LH + 4 + SD_LH / 2.0f;
+          gfx_circle(hx - 16, cy, 9, col_alpha(hc, 0.22f)); gfx_circle(hx - 16, cy, 5, hc); text_draw(hl, RW - 22, l2, SD_PX, 600, col_mix(WHITE_A(200), hc, 0.55f), 0, 0, ALIGN_RIGHT); hw += 40; }
+        char rl[300]; snprintf(rl, sizeof rl, "%s", bf->rel[0] ? bf->rel : bf->facts[0] ? first : st->addon); text_draw(rl, 22, l2, SD_PX, 400, WHITE_A(155), 0, RW - 44 - hw, ALIGN_LEFT); }
       if (bf->warn[0]) { float wy = y + 16 + SN_LH + 4 + SD_LH + 4; icon_draw("minus", 22, wy + (SD_LH - 22) / 2, 22, CORAL); text_draw(bf->warn, 22 + 32, wy + (SD_LH - text_line_height(22)) / 2, 22, 700, CORAL, 0, RW - 44 - 32, ALIGN_LEFT); }
       if (bf->out && !f) gfx_opacity_pop(); }
     gfx_opacity_pop(); }
@@ -3417,11 +3422,24 @@ int player_nerd_lines(char (*out)[120], int max) {
       char oc[8] = ""; if (o->channels >= 3) snprintf(oc, sizeof oc, " %d.1", o->channels - 1); else if (o->channels > 0) snprintf(oc, sizeof oc, " %d.0", o->channels);
       snprintf(out[n++], 120, "audio  %s%s \xe2\x86\x92 %s", nm, oc, P.dts.outDesc[0] ? P.dts.outDesc : "AC3"); }
     else snprintf(out[n++], 120, "audio  %s%s", c && c->codec[0] ? c->codec : "not reported yet", ch); }
-  if (n < max) snprintf(out[n++], 120, "buffer  %.0f s ahead  ·  %s", buf > 0 ? buf : 0, P.isP2p ? "torrent" : P.isHls ? "HLS" : "direct");
+  if (n < max) snprintf(out[n++], 120, "stream  %s  ·  %.0f s buffered", P.isP2p ? "torrent" : P.isHls ? "HLS" : "direct", buf > 0 ? buf : 0);
   if (n < max && P.isP2p) { char pl[96]; if (p2p_peer_line(pl, sizeof pl)) snprintf(out[n++], 120, "p2p  %s", pl); }
-  if (n < max) { double am = asssubs_render_ms(); if (asssubs_on()) snprintf(out[n++], 120, "subtitles  styled, %.0f ms a render", am); else if (P.curSub[0]) snprintf(out[n++], 120, "subtitles  plain"); }
+  if (n < max) { double am = asssubs_render_ms(); if (asssubs_on()) snprintf(out[n++], 120, "subtitles  styled, %.0f ms a render", am); else if (P.curSub[0] && strcmp(P.curSub, "off")) snprintf(out[n++], 120, "subtitles  plain"); else snprintf(out[n++], 120, "subtitles  off"); }
+  /* where it comes from: the addon and the source's first line, the host (never the address itself: a debrid link carries
+     its key), the file's size and its average bitrate over the running time */
+  if (n < max && !P.isTrailer) { const char *nm = P.st.name[0] ? P.st.name : P.sname; char first[80]; { const char *e = strchr(nm, '\n'); snprintf(first, sizeof first, "%.*s", e ? (int)(e - nm) : (int)strlen(nm), nm); }
+    for (char *c = first; *c; c++) if ((unsigned char)*c < 0x20) *c = ' ';
+    snprintf(out[n++], 120, "source  %s%s%s", P.st.addon[0] ? P.st.addon : P.saddon, first[0] ? " \xc2\xb7 " : "", first); }
+  if (n < max && !P.isTrailer) { char host[64] = ""; const char *u = P.url, *h = strstr(u, "://");
+    if (P.isP2p) snprintf(host, sizeof host, "torrent");
+    else if (!strncmp(u, "http://127.0.0.1", 16)) snprintf(host, sizeof host, "converted on this TV");
+    else if (h) { h += 3; const char *at = strchr(h, '@'), *sl = strpbrk(h, "/?#"); if (at && (!sl || at < sl)) h = at + 1; size_t k = 0; while (h[k] && h[k] != '/' && h[k] != ':' && h[k] != '?' && h[k] != '#' && k + 1 < sizeof host) { host[k] = h[k]; k++; } host[k] = 0; }
+    if (host[0]) snprintf(out[n++], 120, "from  %s", host); }
+  if (n < max && !P.isTrailer) { double fs = P.st.size > 0 ? P.st.size : P.size; if (fs > 0) { char sz[24]; if (fs >= 1e9) snprintf(sz, sizeof sz, "%.1f GB", fs / 1073741824.0); else snprintf(sz, sizeof sz, "%.0f MB", fs / 1048576.0);
+      if (d > 60) snprintf(out[n++], 120, "file  %s  \xc2\xb7  %.1f Mb/s on average", sz, fs * 8 / d / 1e6); else snprintf(out[n++], 120, "file  %s", sz); } }
   return n;
 }
+double player_nerd_buffer(void) { if (!P.open || !P.started || P.isTrailer) return -1; double b = video_buffered_end() - video_time(); return b > 0 ? b : 0; }
 
 /* switching channels: a pill in the top corner hugging the channel's logo in its round end. While something is said
    (tuning in, nothing on, its place in the line-up, Back again to leave) it is open with the name and the words; a new

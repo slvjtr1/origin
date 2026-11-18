@@ -52,13 +52,14 @@ static struct {
   /* the best pick: where the focus came to rest (its hint after 3 s), OK held on it, its details panel */
   double restAt; int restKey; int holding, swelled; double holdAt; int info; Tween infoK; QT infoY; float infoH, infoW, infoFrom[4], infoTo[4]; const Stream *infoS; SGlass pglass;
   /* measured once, not per frame: each row's header line (in layout), the chips' words and widths (chipsLaid), the total */
+  const Stream *hp[MAXITEMS]; signed char hv[MAXITEMS]; /* each row's health (Settings > Playback > Source health), read once per stream */
   char tag[MAXITEMS][6][20]; unsigned char ntag[MAXITEMS]; /* each row's quality, as pills: 4K, DV, HDR10, REMUX, Atmos, its size */
   char nm[MAXITEMS][600]; int total, chipsLaid; char chLbl[MAXG + 1][120], chCnt[MAXG + 1][12]; float chW[MAXG + 1]; unsigned chLg;
 } S;
 int streams_open(void) { return S.open; }
 static void count_redo(void) { int n = 0; for (int g = 0; g < S.ng; g++) if (!S.groups[g].resume) n += S.groups[g].n; S.total = n; S.chipsLaid = 0; }
 static int count(void) { return S.total; }
-static void groups_clear(void) { for (int g = 0; g < S.ng; g++) free(S.groups[g].items); memset(S.groups, 0, sizeof S.groups); S.ng = 0; count_redo(); }
+static void groups_clear(void) { memset(S.hp, 0, sizeof S.hp); for (int g = 0; g < S.ng; g++) free(S.groups[g].items); memset(S.groups, 0, sizeof S.groups); S.ng = 0; count_redo(); }
 static void render_chips(void) { S.chipsLaid = 0;
   int curG = S.chipIdx < S.nchips ? S.chips[S.chipIdx] : -1; S.nchips = 0; S.chips[S.nchips++] = -1;
   for (int g = 0; g < S.ng; g++) if (S.groups[g].n && !S.groups[g].resume) S.chips[S.nchips++] = g;
@@ -243,14 +244,24 @@ static float tags_draw(int i, float x, float y, float maxW, int rtl, int f) {
     text_draw(t, px + w / 2, y + (TAG_H - text_line_height(TAG_PX)) / 2, TAG_PX, 700, lead ? (f ? ACC : RGB(17, 17, 17)) : (f ? ACC_FG : WHITE_A(228)), 0.4f, 0, ALIGN_CENTER);
     used += w + 8; }
   return used; }
+/* a stream's health (Settings > Playback > Source health): a pill at the end of its tags, a lit dot and the word in
+   its colour; x is its outer edge (right, or left when mirrored). Its width */
+static float health_pill(int h, float x, float y, int rtl, int f) {
+  const char *t = best_health_label(h); uint32_t c = best_health_color(h); float w = text_width(t, TAG_PX, 700, 0.2f) + 24 + 22, px = rtl ? x : x - w;
+  gfx_rrect(px, y, w, TAG_H, TAG_H / 2, col_alpha(c, f ? 0.3f : 0.16f)); gfx_ring(px, y, w, TAG_H, TAG_H / 2, 1, col_alpha(c, f ? 0.75f : 0.45f));
+  gfx_circle(px + 19, y + TAG_H / 2, 5, c);
+  text_draw(t, px + 30, y + (TAG_H - text_line_height(TAG_PX)) / 2, TAG_PX, 700, f ? ACC_FG : col_mix(WHITE_A(235), c, 0.35f), 0.2f, 0, ALIGN_LEFT);
+  return w; }
 static void layout(void) {
-  if (S.laid) return; S.laid = 1; float y = 0; int lastG = -2;
+  if (S.laid) return; S.laid = 1; float y = 0; int lastG = -2, hon = best_health_on();
   for (int i = 0; i < S.n; i++) { int g = S.itemGroup[i];
     S.headY[i] = -1; if (S.filter < 0 && S.kind[i] == R_PLAIN && g != lastG) { S.headY[i] = y; y += head_h(); } if (S.kind[i] == R_PLAIN) lastG = g;
     char *nm = S.nm[i]; row_name(i, nm, sizeof S.nm[i]); const char *ds = row_desc(i); int ico = S.kind[i] != R_PLAIN;
     int nl = text_wrap_count(nm, LW - 48 - (ico ? ICO + 10 : 0), 2, NM_PX, 600, 0.2f), dl = ds[0] ? text_wrap_count(ds, LW - 48, DS_MAX, DS_PX, 400, 0) : 0;
     S.ntag[i] = S.kind[i] == R_PLAIN ? (unsigned char)tags_of(S.items[i], S.tag[i]) : 0; /* (the best and resume rows say it in words already) */
-    S.itemY[i] = y; S.itemH[i] = 18 + nl * NM_LH + 8 + (S.ntag[i] ? TAG_H + 10 : 0) + dl * DS_LH + 20; y += S.itemH[i] + 8; }
+    if (S.kind[i] == R_PLAIN && hon && S.hp[i] != S.items[i]) { S.hp[i] = S.items[i]; S.hv[i] = (signed char)best_health(S.items[i], !strcmp(S.type, "series") ? 45 : 0); }
+    int hrow = S.kind[i] == R_PLAIN && hon && S.hv[i] > 0;
+    S.itemY[i] = y; S.itemH[i] = 18 + nl * NM_LH + 8 + (S.ntag[i] || hrow ? TAG_H + 10 : 0) + dl * DS_LH + 20; y += S.itemH[i] + 8; }
 }
 static void tick(float dt) {
   tween_tick(&S.x, dt > 0.034f ? 0.034f : dt); tween_tick(&S.op, dt > 0.034f ? 0.034f : dt); tween_tick(&S.out, dt); if (S.closing && !S.out.on && S.out.v <= 0) S.closing = 0;
@@ -398,7 +409,8 @@ static void draw(void) {
     float tx = rtl ? lx - 24 + nx : x0 + 24 + nx, ty = iy + 18 + ny; uint32_t nc = f ? ACC_FG : ACC3;
     if (ico) { icon_draw(S.kind[i] == R_HIDDEN ? "eye" : "play", rtl ? tx - ICO : tx, ty + (NM_LH - ICO) / 2 + 1, ICO, nc); tx += rtl ? -(ICO + 10) : ICO + 10; }
     int nl = text_draw_wrapped(nm, tx, ty + (NM_LH - text_line_height(NM_PX)) / 2, LW - 48 - (ico ? ICO + 10 : 0), 2, NM_PX, 600, nc, 0.2f, al, NM_LH); ty += nl * NM_LH + 8;
-    if (S.ntag[i]) { tags_draw(i, rtl ? lx - 24 + nx : x0 + 24 + nx, ty, LW - 48, rtl, f); ty += TAG_H + 10; }
+    { int h = S.kind[i] == R_PLAIN && best_health_on() && S.hp[i] == S.items[i] ? S.hv[i] : 0; float hw = h > 0 ? health_pill(h, rtl ? x0 + 24 + nx : x0 + LW - 24 + nx, ty, rtl, f) + 12 : 0;
+      if (S.ntag[i]) tags_draw(i, rtl ? lx - 24 + nx : x0 + 24 + nx, ty, LW - 48 - hw, rtl, f); if (S.ntag[i] || h > 0) ty += TAG_H + 10; }
     if (ds[0]) text_draw_wrapped(ds, rtl ? lx - 24 + nx : x0 + 24 + nx, ty + (DS_LH - text_line_height(DS_PX)) / 2, LW - 48, DS_MAX, DS_PX, 400, f ? ACC_FG : WHITE_A(204), 0, al, DS_LH);
     if (S.kind[i] != R_PLAIN && S.kind[i] != R_HIDDEN && f) { float ha = (float)((now - S.restAt - 3) / 0.4); ha = ha < 0 ? 0 : ha > 1 ? 1 : ha; /* resting on it 3 s: how to see all of it, faint */
       if (S.holding || S.info) ha = 0;

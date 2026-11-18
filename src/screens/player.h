@@ -20,6 +20,7 @@ void player_choose_best(const char *type, const char *id, const char *vid);
 void player_cast_best(const char *type, const char *id, const char *vid, double pos); /* a phone's playbest: the same choice, then from pos (0: from the start) */
 int  player_open(void);
 int  player_nerd_lines(char (*out)[120], int max); /* Stats for nerds: what plays and how */
+double player_nerd_buffer(void);                   /* seconds buffered ahead of the picture; -1 when nothing plays */
 int  player_art_full(void);
 int  player_live(void);           /* the picture is up: the window must be transparent */
 float player_cover(void);         /* how much of the page the player covers (0..1): it fades over the page and off it */

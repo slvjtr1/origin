@@ -92,7 +92,7 @@ static const Opt CORNERO[] = { { "round", "Round" }, { "soft", "Soft" }, { "squa
 static const Opt ACCENT_OPTS[] = { { "logo", "From the logo" }, { "adaptive", "From the artwork" }, { "purple", "Purple" }, { "violet", "Violet" }, { "fuchsia", "Fuchsia" }, { "pink", "Pink" }, { "rose", "Rose" }, { "red", "Red" }, { "orange", "Orange" }, { "amber", "Amber" }, { "gold", "Gold" }, { "lime", "Lime" }, { "green", "Green" }, { "emerald", "Emerald" }, { "teal", "Teal" }, { "cyan", "Cyan" }, { "sky", "Sky" }, { "blue", "Blue" }, { "indigo", "Indigo" }, { "graphite", "Graphite" } };
 #define NCAT 13
 #define MAXROWS 48
-static Setting playBase[21], playS[20], seekS[6], subsBase[26], subsS[26], audS[6], lookS[9], langS[3], keyS[4], traktS[6], addonS[40], acctS[1], supS[8], picS[6], accS[8];
+static Setting playBase[22], playS[20], seekS[6], subsBase[26], subsS[26], audS[6], lookS[9], langS[3], keyS[4], traktS[6], addonS[40], acctS[1], supS[8], picS[6], accS[8];
 static Cat cats[NCAT]; static int ncat; /* (Keys leaves when this build carries every key) */
 static int cat_of(const Setting *opts) { for (int i = 0; i < ncat; i++) if (cats[i].opts == opts) return i; return -1; }
 
@@ -214,7 +214,7 @@ static int about_opts(void) {
   set_s(&supS[n++], "betaUpdates", "Beta updates", "New versions to try before everyone. They may have problems", OO, 2, "false");
   set_act(&supS[n++], "__logs", "Share logs", "Share the code and describe the issue");
   if (welcome_support_url()[0]) set_act(&supS[n++], "__support", "Support the project", "A star on GitHub helps others find it"); /* its codes in view (sized as if last) */
-  set_s(&supS[n++], "nerdStats", "Stats for nerds", "Memory, storage and frame times in a corner of the screen", OO, 2, "false"); /* under it: the list scrolls to it */
+  set_s(&supS[n++], "nerdStats", "Stats for nerds", "Memory, storage and frame times in a corner of the screen; in the player, what plays and its buffer (the blue key there turns it on and off)", OO, 2, "false"); /* under it: the list scrolls to it */
   set_act(&supS[n++], "__reset", "Reset all settings", "Every setting back as it came. Your account, library and addons stay");
   return n;
 }
@@ -225,7 +225,7 @@ static const char *const RESET_KEYS[] = { "accent", "animeAudioTrack", "betaUpda
   "metaLang", "nerdStats", "cleanSources", "filmEnhance", "gpuUpscale", "searchKnownOnly", "seekStep", "skipIntro", "skipShowSec", "ssDelay", "subsAssStyle", "subsAuto", "subsBgStyle", "subsBold", "subsColor",
   "subsFollow", "subsFont", "subsLang", "subsLang2", "subsOnly", "subsOutline", "subsOutlineColor", "subsOutlineWidth", "subsPos", "subsShadow", "subsShadowDist",
   "subsShadowSoft", "subsShadowStrength", "subtitleSize", "uiSound", "uiSoundVol", "reduceMotion", "animeEnhance", "brightBoost", "darkSee", "voiceClear", "evenVolume", "subsNoSdh", "subsNoAds", "kbLang", "libSort", "osSubs", "ytHd",
-  "spoilers", "subsFontAr", "subsMode", "subsBright", "subsPosPct", "nextCard", "p2pTcpOnly", "showChapters", "seekPreviews", "seekPreviewsWait", NULL };
+  "spoilers", "subsFontAr", "subsMode", "subsBright", "subsPosPct", "nextCard", "p2pTcpOnly", "showChapters", "seekPreviews", "seekPreviewsWait", "sourceHealth", NULL };
 static void enter(const void *p); static void show_cat(int i, int dir);
 static void do_reset(void *ud) { (void)ud;
   for (int i = 0; RESET_KEYS[i]; i++) store_remove(RESET_KEYS[i]);
@@ -243,6 +243,7 @@ static void play_layout(void) {
   int on = strcmp(store_get("bgTrailer", "true"), "false") != 0, n = 0;
   playS[n++] = playBase[4]; /* the best stream first */
   playS[n++] = playBase[9];
+  playS[n++] = playBase[21]; /* each stream's health in the lists */
   playS[n++] = playBase[13]; /* what the addons list, cleaned */
   if (sb_src_bad_count() > 0) { char k[12]; snprintf(k, sizeof k, "%d", sb_src_bad_count()); /* the sources marked as the wrong video: a way back for them */
     set_act(&playBase[16], "__srcBack", T("Bring back hidden sources"), T1("{n} source(s) marked as the wrong video stay out of the lists. OK to let them back in", "n", k)); playBase[16].raw = 1; playBase[16].sub = 1; playS[n++] = playBase[16]; }
@@ -296,6 +297,7 @@ static void build(void) {
   set_s(&playBase[3], "bgTrailer", "Background trailers", "A trailer plays behind Home after a few seconds", OO, 2, "true");
   set_s(&playBase[4], "autoBest", "Play the best stream automatically", "", OO, 2, "false");
   set_s(&playBase[7], "dv7Convert", "Dolby Vision for Blu-ray copies", "Their picture is converted on this TV so it shows in Dolby Vision, not HDR10", OO, 2, "true");
+  set_s(&playBase[21], "sourceHealth", "Source health", "A coloured mark on each stream: smooth, may buffer or slow, read from its size, its seeds and your internet speed", OO, 2, "false");
   set_s(&playBase[9], "bestRow", "Best match for this TV", "First in the streams: what this TV plays best, in the title’s own language, subtitles named", OO, 2, "true");
   set_s(&playBase[15], "ytHd", "YouTube trailers in 1080p", "Warning: a trailer may take longer to start, and a TV before webOS 4 cannot play them (the usual 360p one plays after a moment). Trailers from IMDb are always at their best", OO, 2, "false");
   set_s(&playBase[13], "cleanSources", "Clean sources", "Clean: no fake files, no other episodes. Super clean: also no other title of a similar name, no cinema recordings, and a source that played the wrong video never comes back", CLEANO, 3, "super");

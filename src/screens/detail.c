@@ -27,6 +27,7 @@
 #include "screens/revpanel.h"
 #include "core/parental.h"
 #include "core/rating.h"
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -159,6 +160,16 @@ static void play_best_vid(const char *vid) { player_choose_best(D.p.it.type, ID(
 static int play_target(char *vid, size_t cap) {
   snprintf(vid, cap, "%s", film_vid()); if (!is_series()) return 1; const cJSON *st = js_obj(lib_get(ID()), "state");
   const char *v = D.eps && D.epIdx < D.neps ? js_str(D.eps[D.epIdx], "id", NULL) : NULL; if (!v || !*v) v = js_str(st, "video_id", NULL); if (!v || !*v) v = first_unwatched(); if (!v) return 0; snprintf(vid, cap, "%s", v); return 1; }
+/* what Play says: "Resume · 42 min left" (a film started), "Resume S2 E5 · 18 min left" (the episode being watched),
+   "Play S2 E6" (the next one of a series already begun), else "Play"; *pct: how far the one being resumed is (0 none) */
+static void play_words(char *out, size_t cap, float *pct) {
+  if (pct) *pct = 0; char vid[SB_VID]; const cJSON *st = js_obj(lib_get(ID()), "state"); if (!play_target(vid, sizeof vid)) { snprintf(out, cap, "%s", T("Play")); return; }
+  double off = js_num(st, "timeOffset", 0), d = js_num(st, "duration", 0); int same = st && (!is_series() || !strcmp(js_str(st, "video_id", ""), vid)), rs = same && off > 60000;
+  char se[24] = ""; if (is_series()) { const char *c = strrchr(vid, ':'); if (c && c > vid) { const char *q = c - 1; while (q > vid && *q != ':') q--; int s = atoi(q + 1), e = atoi(c + 1); if (*q == ':' && e > 0) snprintf(se, sizeof se, "S%d E%d", s, e); } }
+  char left[40] = ""; if (rs && d > off) { int m = (int)((d - off) / 60000 + 0.5); char n[12]; snprintf(n, sizeof n, "%d", m < 1 ? 1 : m); snprintf(left, sizeof left, "%s", T1("{n} min left", "n", n)); if (pct) *pct = (float)(off / d); }
+  const char *verb = T(rs ? "Resume" : "Play"); int begun = st && (js_num(st, "timeOffset", 0) > 0 || *js_str(st, "video_id", ""));
+  if (se[0] && (rs || begun)) snprintf(out, cap, "%s %s%s%s", verb, se, left[0] ? " \xc2\xb7 " : "", left);
+  else snprintf(out, cap, "%s%s%s", verb, left[0] ? " \xc2\xb7 " : "", left); }
 static float hold_w(void) { static float w; static unsigned lg; if (!w || lg != i18n_gen()) { lg = i18n_gen(); w = text_width(T("Hold for streams"), 26, 600, 0); } return w; }
 static void play_best(void) {
   char vid[SB_VID]; cJSON *lb = lib_get(ID()); const cJSON *st = js_obj(lb, "state");
@@ -171,7 +182,7 @@ static void play_best(void) {
 enum { B_PLAY, B_TRAILER, B_SIMILAR, B_LIB, B_EYE, B_REVIEWS, B_COLL };
 static void btn_label_now(int kind, char *out, size_t cap, const char **icon) {
   switch (kind) {
-    case B_PLAY: { cJSON *lb = lib_get(ID()); int rs = js_num(js_obj(lb, "state"), "timeOffset", 0) > 60000; *icon = "play"; snprintf(out, cap, "%s", T(rs ? "Resume" : "Play")); break; }
+    case B_PLAY: *icon = "play"; play_words(out, cap, NULL); break;
     case B_TRAILER: *icon = "trailer"; snprintf(out, cap, "%s", T("Trailer")); break;
     case B_SIMILAR: *icon = "similar"; snprintf(out, cap, "%s", T("Similar")); break;
     case B_REVIEWS: *icon = "reviews"; snprintf(out, cap, "%s", T("Reviews")); break;
@@ -288,7 +299,7 @@ static float names_h_now(void) { int two = 0, role = 0; for (int i = 0; i < D.np
 typedef struct { int unrel, w, res, epNum; float tagW; const char *ov; char rel[64], src[512], tag[96], title[300], info[160], ovb[300]; } EpRec;
 static struct {
   int ok; unsigned ver, lv, lg, frame; long mn, mnNow;
-  char btnLbl[7][64]; const char *btnIcon[7]; float btnW[7]; int wNow;   /* the buttons by kind */
+  char btnLbl[7][64]; const char *btnIcon[7]; float btnW[7]; int wNow; int epKey; float playPct; /* epKey: the episode in view the words were made for; playPct: the resumed one's progress */   /* the buttons by kind */
   char cover[512], fb[512]; const char *name, *desc; int nameN; float descH, namesH;
   MetaParts mp[2];                                                        /* the meta line: without / with the translated name */
   char sLbl[MAXSEASON][48]; float sW[MAXSEASON][2];                       /* the seasons, at 600 and 700 */
@@ -296,9 +307,11 @@ static struct {
 } DC;
 static void dc_check(void) {
   unsigned f = app_frame(); if (f != DC.frame || !DC.ok) { DC.frame = f; DC.mnNow = (long)(time(NULL) / 60); }
-  if (DC.ok && DC.ver == D.ver && DC.lv == lib_version() && DC.lg == i18n_gen() && DC.mn == DC.mnNow) return;
-  DC.ok = 1; DC.ver = D.ver; DC.lv = lib_version(); DC.lg = i18n_gen(); DC.mn = DC.mnNow;
+  int ek = D.seasonIdx * 10000 + D.epIdx;
+  if (DC.ok && DC.ver == D.ver && DC.lv == lib_version() && DC.lg == i18n_gen() && DC.mn == DC.mnNow && DC.epKey == ek) return;
+  DC.ok = 1; DC.epKey = ek; DC.ver = D.ver; DC.lv = lib_version(); DC.lg = i18n_gen(); DC.mn = DC.mnNow;
   for (int k = 0; k < 7; k++) { btn_label_now(k, DC.btnLbl[k], sizeof DC.btnLbl[k], &DC.btnIcon[k]); DC.btnW[k] = text_width(DC.btnLbl[k], 26, 600, 0); }
+  { char tmp[64]; play_words(tmp, sizeof tmp, &DC.playPct); }
   DC.wNow = watched_now();
   { Item *it = malloc(sizeof *it); DC.cover[0] = DC.fb[0] = 0;
     if (it) { *it = meta_item(); char pu[512]; const char *lp = js_str(D.meta, "locPoster", NULL); const char *src = lp && *lp ? lp : sb_poster_of(it, pu, sizeof pu); snprintf(DC.cover, sizeof DC.cover, "%s", src ? src : "");
@@ -586,6 +599,12 @@ static void season_focus(int i, int b) { (void)b; ptr_off(); if (D.zone != 1 || 
 static void season_act(int i, int b) { (void)b; ptr_off(); D.zone = 1; if (i != D.seasonIdx) { flush_season(); D.seasonIdx = i; build_eps(); } paint(); }
 static void ep_focus(int i, int b) { (void)b; ptr_off(); if (D.zone != 2 || D.epIdx != i) { D.zone = 2; D.epIdx = i; paint(); } }
 static float bx_of(int i, int rtl, float lx) { return rtl ? lx - D.btn[i].x.v - BD : lx + D.btn[i].x.v; }
+/* a thin ring round Play's icon, lit from the top clockwise as far as it was watched (beads close enough to read as
+   one line; the rest a faint track) */
+static void progress_ring(float cx, float cy, float pct, uint32_t c) {
+  const float r = BD / 2 - 13; if (pct > 1) pct = 1;
+  gfx_ring(cx - r - 1.5f, cy - r - 1.5f, 2 * r + 3, 2 * r + 3, r + 1.5f, 3, col_alpha(c, 0.22f));
+  int n = (int)(2 * 3.14159f * r * pct / 1.6f) + 1; for (int i = 0; i <= n; i++) { float a = -1.5708f + 6.28318f * pct * i / (n ? n : 1); gfx_circle(cx + r * cosf(a), cy + r * sinf(a), 1.6f, c); } }
 static void draw_btns(float lx, int rtl) {
   float nx = nudge_x(&D.nudge) * (D.zone == 0), ny = nudge_y(&D.nudge) * (D.zone == 0);
   /* the accent pill under the focused button (mirrored for right-to-left) */
@@ -604,6 +623,7 @@ static void draw_btns(float lx, int rtl) {
     if (b->fb.v < 0.999f) gfx_circle(x + BD / 2 + fo, BD / 2 + fy, BD / 2, col_alpha(base, 1 - b->fb.v)); /* its own glass; the pill shows through once focused */
     uint32_t fg = b->f ? ACC_FG : WHITE_A(255);
     icon_draw(icon, rtl ? x + BD - 21 - 34 + fo : x + 21 + fo, 21 + fy, 34, fg);
+    if (b->kind == B_PLAY && DC.playPct > 0.005f) progress_ring(rtl ? x + BD - BD / 2 + fo : x + BD / 2 + fo, BD / 2 + fy, DC.playPct, fg); /* how far the one it resumes is */
     if (b->la.v > 0.001f) { float hk = b->kind == B_PLAY ? D.lblA.v : 0; gfx_opacity_push(b->la.v * (1 - hk)); text_draw(lbl, rtl ? x + BD - 66 + fo : x + 66 + fo, (BD - text_line_height(26)) / 2 + fy, 26, 600, fg, 0, 0, rtl ? ALIGN_RIGHT : ALIGN_LEFT); gfx_opacity_pop();
       if (hk > 0.001f) { gfx_opacity_push(b->la.v * hk); text_draw(T("Hold for streams"), rtl ? x + BD - 66 + fo : x + 66 + fo, (BD - text_line_height(26)) / 2 + fy, 26, 600, fg, 0, 0, rtl ? ALIGN_RIGHT : ALIGN_LEFT); gfx_opacity_pop(); } } }
   /* resting on Play with the best stream on: how to reach every stream, after the row */

@@ -25,7 +25,7 @@
         "rootRequired": false,
         "ipkUrl": "https://github.com/slvjtr1/origin/releases/download/v1.5.1/tv.stremioorigin.app_1.5.1_arm.ipk",
         "ipkHash": {
-          "sha256": "1550221cbee884c2e233f56b0ce82166286ce408f37509cd9875e48b165c7605"
+          "sha256": "c6ea19700d0c1228f3fea8c30b4c36af14ee99f2d8dff92de676db5ee64e73e8"
         },
         "notes": [
           "Account switching: Trakt activity, profiles and upcoming episode dismissals stay with your account.",

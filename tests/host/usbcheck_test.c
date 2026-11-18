@@ -29,11 +29,11 @@ int main(int argc, char **argv) {
     struct stat st; CHECK(stat(eng, &st) != 0); }
   { /* asked to stop while it measures: it comes out at its next write */
     fresh(drive, sizeof drive, base, "drive3"); snprintf(eng, sizeof eng, "%s/app-engine", drive);
-    usbcheck_measure_s = 30; UsbCheck c; usbcheck_init(&c, drive, eng); pthread_t th; pthread_create(&th, NULL, run, &c);
-    double t0 = host_now(); for (;;) { pthread_mutex_lock(&mu); int s = c.stage; pthread_mutex_unlock(&mu); if (s >= 2 || host_now() - t0 > 5) break; host_sleep_ms(5); }
-    host_sleep_ms(100); double t1 = host_now(); usbcheck_cancel(&c); pthread_join(th, NULL);
+    usbcheck_pause_ms = 300; usbcheck_measure_s = 30; UsbCheck c; usbcheck_init(&c, drive, eng); pthread_t th; pthread_create(&th, NULL, run, &c);
+    double t0 = host_now(); for (;;) { pthread_mutex_lock(&mu); int s = c.stage; pthread_mutex_unlock(&mu); if (s >= 1 || host_now() - t0 > 5) break; host_sleep_ms(5); }
+    double t1 = host_now(); usbcheck_cancel(&c); pthread_join(th, NULL);
     CHECKF(host_now() - t1 < 2.0, "stopped in %.2f s", host_now() - t1); CHECK(c.res == UC_FAIL); CHECK(leftovers(drive) == 0);
-    struct stat st; CHECK(stat(eng, &st) != 0); usbcheck_measure_s = 0.4; }
+    struct stat st; CHECK(stat(eng, &st) != 0); usbcheck_measure_s = 0.4; usbcheck_pause_ms = 0; }
   { /* a folder that is not there: it cannot be written, the first step failed */
     snprintf(drive, sizeof drive, "%s/not-there/at-all", base); UsbCheck c; usbcheck_init(&c, drive, ""); usbcheck_run(&c, &mu);
     CHECK(c.res == UC_FAIL); CHECK(c.failRow == 1); CHECK(c.why[0] != 0); }
@@ -43,8 +43,8 @@ int main(int argc, char **argv) {
     CHECK(fa >= 0 && fb >= 0 && strcmp(a, b)); struct stat sa; fstat(fa, &sa); close(fa); close(fb);
     usbcheck_unlink_own(a, &sa); struct stat x; CHECK(stat(a, &x) != 0); CHECK(stat(b, &x) == 0); unlink(b);
 #ifndef _WIN32 /* (a replaced file is told apart by its inode: Windows' stat gives none) */
-    int f = usbcheck_open_own(drive, ".origin-check", a, sizeof a); struct stat own; fstat(f, &own); close(f); unlink(a);
-    int g = open(a, O_CREAT | O_WRONLY, 0600); close(g); usbcheck_unlink_own(a, &own); CHECKF(stat(a, &x) == 0, "a file put in its place is left there"); unlink(a);
+    int f = usbcheck_open_own(drive, ".origin-check", a, sizeof a); struct stat own; fstat(f, &own); unlink(a);
+    int g = open(a, O_CREAT | O_WRONLY, 0600); close(g); usbcheck_unlink_own(a, &own); close(f); CHECKF(stat(a, &x) == 0, "a file put in its place is left there"); unlink(a);
 #endif
   }
   { /* writing through short writes */

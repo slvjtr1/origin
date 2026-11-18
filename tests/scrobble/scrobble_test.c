@@ -136,7 +136,13 @@ int main(void) {
     pos = 0; play(&movie, 1, 20, 6000); scrobble_player_end(pos, 6000, 0); flush(); CHECK(count("/scrobble/") == 0, "nothing sent for the other account");
     snprintf(acctId, sizeof acctId, "%s", ""); CONNECT("accB"); CHECK(scrobble_state() == TRAKT_LINKED && FILE_HAS("\"acct\":\"\""), "connected signed out: no account yet");
     snprintf(acctId, sizeof acctId, "acct3"); clk += 2; scrobble_tick(); CHECK(scrobble_state() == TRAKT_LINKED && FILE_HAS("\"acct\":\"acct3\""), "no account kept (a file from before): taken by the one signed in");
-    scrobble_unlink(); }
+    scrobble_profile_ask(); int stats = nr - 1;
+    pos = 0; for (int i = 0; i < 28; i++) { clk += .5; pos += .5; scrobble_player(&movie, 1, pos, 6000); scrobble_tick(); }
+    answer(nr - 1, 401, NULL); int pendingRefresh = nr - 1;
+    CHECK(strstr(R[pendingRefresh].url, "/oauth/token") != NULL, "renewal outstanding");
+    scrobble_unlink(); answer(pendingRefresh, 200, tok); answer(stats, 200, "{}");
+    CHECK(scrobble_state() == TRAKT_OFF && access(p2, F_OK) != 0, "late renewal cannot restore disconnected credentials");
+    CHECK(!scrobble_profile()->haveStats, "late profile belongs to the disconnected account"); }
   snprintf(cmd, sizeof cmd, "rm -rf %s", dataDir); if (system(cmd)) {}
   printf(fails ? "%d failed\n" : "all ok\n", fails); return fails ? 1 : 0;
 }

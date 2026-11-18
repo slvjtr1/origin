@@ -11,14 +11,27 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ORIGIN_BUILD="${ORIGIN_BUILD:-$HOME/origin-build}"   # the private build folder outside the repo: toolchain, SDK, sources, keys
 TARGET="${1:-webos}"
-W="${FFMPEG_WORK:-$ORIGIN_BUILD/ffmpeg}"; mkdir -p "$W"
+W="${FFMPEG_WORK:-$ORIGIN_BUILD/ffmpeg}"; mkdir -p "$W" "$ORIGIN_BUILD/src"
 ZIG="${ZIG:-$ORIGIN_BUILD/zig-aarch64-macos-0.17.0/zig}"
 SDK="${SDK:-$ORIGIN_BUILD/sdk/arm-webos-linux-gnueabi_sdk-buildroot/arm-webos-linux-gnueabi/sysroot}"
+# On Windows use an MSYS2 shell with its POSIX GNU make, binutils and host compiler.
+# A native Windows make cannot follow MSYS absolute paths in generated includes.
+case "$(uname -s)" in
+  MSYS*|MINGW*)
+    if "${MAKE:-make}" --version 2>/dev/null | grep -Eiq 'built for .*mingw|built for Windows'; then
+      echo "Use MSYS2 /usr/bin/make (MAKE=/usr/bin/make), gcc and binutils to build FFmpeg." >&2
+      exit 1
+    fi ;;
+esac
 VERSION=7.1.1
 SHA256=733984395e0dbbe5c046abda2dc49a5544e7e0e1e2366bba849222ae9e3a03b1
 TARBALL="$ORIGIN_BUILD/src/ffmpeg-$VERSION.tar.xz"
 [ -f "$TARBALL" ] || curl -fsSL -o "$TARBALL" "https://ffmpeg.org/releases/ffmpeg-$VERSION.tar.xz"
-echo "$SHA256  $TARBALL" | shasum -a 256 -c - >/dev/null
+if command -v sha256sum >/dev/null; then
+  echo "$SHA256  $TARBALL" | sha256sum -c - >/dev/null
+else
+  echo "$SHA256  $TARBALL" | shasum -a 256 -c - >/dev/null
+fi
 SRC="$W/ffmpeg-$VERSION"; [ -f "$SRC/configure" ] || tar -xJf "$TARBALL" -C "$W"
 B="$W/build-$TARGET"; P="$W/prefix-$TARGET"
 # What the converter needs and nothing more: the DTS decoder (the core only is decoded, never the lossless XLL
@@ -39,7 +52,7 @@ case "$TARGET" in
     # (-lz as the SDK's libz.so itself: zig on Windows turns -lz into a path its linker cannot read)
     printf '#!/bin/sh\nfor a in "$@"; do shift; [ "$a" = -lz ] && a="%s"; set -- "$@" "$a"; done\nexec "%s" cc %s "$@"\n' "$SDK/usr/lib/libz.so" "$ZIG" "$ZT" > "$TC/cc"; printf '#!/bin/sh\nexec "%s" ar "$@"\n' "$ZIG" > "$TC/ar"; printf '#!/bin/sh\nexec "%s" ranlib "$@"\n' "$ZIG" > "$TC/ranlib"
     chmod 755 "$TC/cc" "$TC/ar" "$TC/ranlib"
-    ARCH="--enable-cross-compile --arch=arm --target-os=linux --cc=$TC/cc --ar=$TC/ar --ranlib=$TC/ranlib --nm=nm"   # NEON assembly kept (softfp calling convention detected); --cpu is left out, this compiler names the cores its own way
+    ARCH="--enable-cross-compile --arch=arm --target-os=linux --cc=$TC/cc --ar=$TC/ar --ranlib=$TC/ranlib --nm=${NM:-nm} --host-cc=${HOST_CC:-cc}"   # NEON assembly kept (softfp calling convention detected); --cpu is left out, this compiler names the cores its own way
     XC="-O2 -ffunction-sections -fdata-sections -idirafter $SDK/usr/include -ffile-prefix-map=$W=/ffmpeg -ffile-prefix-map=$HOME=/src"
     XL="-L$SDK/usr/lib"   # (the TV's own libz, as the app uses)
     OUT="$ROOT/build/webos/libsbdts.so" ;;
@@ -52,8 +65,8 @@ B="$B$PV"; P="$P$PV"; mkdir -p "$B"   # (each kind its own build folder: switchi
 if [ ! -f "$P/lib/libavformat.a" ] || [ "$(cat "$B/.conf" 2>/dev/null)" != "$CONF $XC" ]; then
   echo "== FFmpeg $VERSION ($TARGET)"
   (cd "$B" && "$SRC/configure" --prefix="$P" $CONF --extra-cflags="$XC" --extra-ldflags="$XL" >/dev/null \
-    && { [ "$TARGET" != webos ] || sed 's/#define HAVE_SYSCTL 1/#define HAVE_SYSCTL 0/' config.h > config.h.t && mv config.h.t config.h; } \
-    && make -j"${FFMPEG_JOBS:-4}" >/dev/null && make install >/dev/null)   # (the compiler's newer libc headers make configure see a sysctl glibc 2.17 never had)
+    && { if [ "$TARGET" = webos ]; then sed 's/#define HAVE_SYSCTL 1/#define HAVE_SYSCTL 0/' config.h > config.h.t && mv config.h.t config.h; fi; } \
+    && "${MAKE:-make}" -j"${FFMPEG_JOBS:-4}" >/dev/null && "${MAKE:-make}" install >/dev/null)   # (the compiler's newer libc headers make configure see a sysctl glibc 2.17 never had)
   echo "$CONF $XC" > "$B/.conf"
 fi
 # the line a rebuild needs (local paths left out), kept beside the LGPL text

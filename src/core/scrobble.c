@@ -37,7 +37,15 @@ static void auth_save(void) {
   if (f) { size_t n = strlen(s), w = fwrite(s, 1, n, f); fclose(f); if (w == n) rename(tmp, A.path); else remove(tmp); } /* whole or not at all: a refresh token works once */
   free(s);
 }
-static void auth_clear(void) { memset(A.access, 0, sizeof A.access); memset(A.refresh, 0, sizeof A.refresh); A.expires = 0; A.user[0] = 0; A.acct[0] = 0; A.client[0] = 0; A.state = TRAKT_OFF; remove(A.path); }
+static TraktProfile PR; static double prAt = -1e9;
+static uintptr_t authGeneration;
+static void clear_jobs(void);
+static void invalidate_auth(void) {
+  authGeneration++; A.refreshing = 0; A.retryAt = 0;
+  memset(&PR, 0, sizeof PR); prAt = -1e9;
+  clear_jobs();
+}
+static void auth_clear(void) { invalidate_auth(); memset(A.access, 0, sizeof A.access); memset(A.refresh, 0, sizeof A.refresh); A.expires = 0; A.user[0] = 0; A.acct[0] = 0; A.client[0] = 0; A.state = TRAKT_OFF; remove(A.path); }
 static void take_tokens(const cJSON *j) { /* a token answer: access, refresh, when it ends */
   snprintf(A.access, sizeof A.access, "%s", js_str(j, "access_token", "")); snprintf(A.refresh, sizeof A.refresh, "%s", js_str(j, "refresh_token", ""));
   double cr = js_num(j, "created_at", 0), ex = js_num(j, "expires_in", 7 * 86400.0); A.expires = (long long)((cr > 0 ? cr : (double)time(NULL)) + ex);
@@ -52,30 +60,30 @@ static void post(const char *url, cJSON *body, int bearer, NetCb cb, void *ud) {
   net_post_hdr_t(url, s ? s : "{}", "application/json", h, 20000, cb, ud); free(s);
 }
 static void on_user(int st, const unsigned char *b, size_t n, void *ud) {
-  (void)n; (void)ud; cJSON *j = st == 200 ? net_json(b) : NULL; const char *u = js_str(js_obj(j, "user"), "username", "");
+  (void)n; if ((uintptr_t)ud != authGeneration) return; cJSON *j = st == 200 ? net_json(b) : NULL; const char *u = js_str(js_obj(j, "user"), "username", "");
   if (*u && A.state == TRAKT_LINKED) { snprintf(A.user, sizeof A.user, "%s", u); auth_save(); fprintf(stderr, "[trakt] connected, its name known\n"); } /* (never the account's name: the log may be shared) */
   net_json_free(j);
 }
-static void ask_user(void) { char h[512]; headers(h, sizeof h, 1); net_get_hdr(API "/users/settings", h, on_user, NULL); }
+static void ask_user(void) { char h[512]; headers(h, sizeof h, 1); net_get_hdr(API "/users/settings", h, on_user, (void *)authGeneration); }
 /* the account's card (Settings > Log out): its name, VIP, when it joined, and what it has watched; asked when the card
    shows, at most every 10 minutes, kept in memory only */
-static TraktProfile PR; static double prAt = -1e9;
+
 const TraktProfile *scrobble_profile(void) { return &PR; }
 static void on_prof_user(int st, const unsigned char *b, size_t n, void *ud) {
-  (void)n; (void)ud; cJSON *j = st == 200 ? net_json(b) : NULL; const cJSON *u = js_obj(j, "user");
+  (void)n; if ((uintptr_t)ud != authGeneration) return; cJSON *j = st == 200 ? net_json(b) : NULL; const cJSON *u = js_obj(j, "user");
   if (u) { snprintf(PR.user, sizeof PR.user, "%s", js_str(u, "username", "")); snprintf(PR.name, sizeof PR.name, "%s", js_str(u, "name", "")); PR.vip = js_bool(u, "vip", 0) || js_bool(u, "vip_ep", 0);
     snprintf(PR.joined, sizeof PR.joined, "%.10s", js_str(u, "joined_at", "")); PR.haveUser = 1; }
   net_json_free(j); }
 static void on_prof_stats(int st, const unsigned char *b, size_t n, void *ud) {
-  (void)n; (void)ud; cJSON *j = st == 200 ? net_json(b) : NULL;
+  (void)n; if ((uintptr_t)ud != authGeneration) return; cJSON *j = st == 200 ? net_json(b) : NULL;
   if (j) { const cJSON *m = js_obj(j, "movies"), *e = js_obj(j, "episodes"); PR.movies = (int)js_num(m, "watched", 0); PR.episodes = (int)js_num(e, "watched", 0); PR.minutes = (long)(js_num(m, "minutes", 0) + js_num(e, "minutes", 0)); PR.haveStats = 1; }
   net_json_free(j); }
 void scrobble_profile_ask(void) {
   if (A.state != TRAKT_LINKED || !A.access[0]) { if (A.state != TRAKT_LINKED) memset(&PR, 0, sizeof PR); return; }
   if (mono() - prAt < 600) return; prAt = mono(); char h[512]; headers(h, sizeof h, 1);
-  net_get_hdr(API "/users/settings", h, on_prof_user, NULL); net_get_hdr(API "/users/me/stats", h, on_prof_stats, NULL); }
+  net_get_hdr(API "/users/settings", h, on_prof_user, (void *)authGeneration); net_get_hdr(API "/users/me/stats", h, on_prof_stats, (void *)authGeneration); }
 static void on_refresh(int st, const unsigned char *b, size_t n, void *ud) {
-  (void)n; (void)ud; A.refreshing = 0; cJSON *j = st == 200 ? net_json(b) : NULL;
+  (void)n; if ((uintptr_t)ud != authGeneration) return; A.refreshing = 0; cJSON *j = st == 200 ? net_json(b) : NULL;
   if (j && *js_str(j, "access_token", "")) { take_tokens(j); fprintf(stderr, "[trakt] access renewed\n"); }
   else if (st == 400 || st == 401 || st == 403) { A.state = TRAKT_RELINK; auth_save(); fprintf(stderr, "[trakt] the access could not be renewed (%d): connect again\n", st); } /* (the refresh token is spent or revoked) */
   else { A.retryAt = mono() + 600; fprintf(stderr, "[trakt] renewing failed (%d): tried again later\n", st); }
@@ -85,7 +93,7 @@ static void refresh_now(void) {
   if (A.refreshing || !A.refresh[0]) return; A.refreshing = 1;
   cJSON *o = cJSON_CreateObject(); cJSON_AddStringToObject(o, "refresh_token", A.refresh); cJSON_AddStringToObject(o, "client_id", A.client);
   cJSON_AddStringToObject(o, "redirect_uri", "urn:ietf:wg:oauth:2.0:oob"); cJSON_AddStringToObject(o, "grant_type", "refresh_token");
-  post(AUTH "/oauth/token", o, 0, on_refresh, NULL);
+  post(AUTH "/oauth/token", o, 0, on_refresh, (void *)authGeneration);
 }
 static int due(void) { return A.state == TRAKT_LINKED && A.expires - (long long)time(NULL) < 2 * 86400; } /* two days before it ends */
 void scrobble_init(void) {
@@ -116,7 +124,7 @@ static void on_code(int st, const unsigned char *b, size_t n, void *ud) {
   net_json_free(j); if (L.cb) L.cb(1, L.ud);
 }
 void scrobble_link_start(void (*cb)(int, void *), void *ud) {
-  if (!A.inited) scrobble_init(); memset(&L, 0, sizeof L); L.on = 1; L.tok = (unsigned)(mono() * 1000); L.cb = cb; L.ud = ud;
+  if (!A.inited) scrobble_init(); unsigned tok = L.tok + 1; memset(&L, 0, sizeof L); L.on = 1; L.tok = tok; L.cb = cb; L.ud = ud;
   if (!trakt_client_id()[0]) { L.on = 0; if (cb) cb(0, ud); return; }
   cJSON *o = cJSON_CreateObject(); cJSON_AddStringToObject(o, "client_id", trakt_client_id());
   char *s = cJSON_PrintUnformatted(o); cJSON_Delete(o); char h[256]; snprintf(h, sizeof h, "trakt-api-version: 2\ntrakt-api-key: %s", trakt_client_id());
@@ -126,8 +134,8 @@ const char *scrobble_link_code(void) { return L.code; }
 const char *scrobble_link_url(void) { return L.url; }
 const char *scrobble_link_error(void) { return L.err; }
 static void on_token(int st, const unsigned char *b, size_t n, void *ud) {
-  (void)n; L.busy = 0; if ((unsigned)(uintptr_t)ud != L.tok || !L.on) return; cJSON *j = st == 200 ? net_json(b) : NULL;
-  if (j && *js_str(j, "access_token", "")) { snprintf(A.acct, sizeof A.acct, "%s", sb_signed_in() ? sb_user_id() : ""); take_tokens(j); A.user[0] = 0; L.done = 1; fprintf(stderr, "[trakt] this TV is connected\n"); ask_user(); }
+  (void)n; if ((unsigned)(uintptr_t)ud != L.tok || !L.on) return; L.busy = 0; cJSON *j = st == 200 ? net_json(b) : NULL;
+  if (j && *js_str(j, "access_token", "")) { invalidate_auth(); A.user[0] = 0; snprintf(A.acct, sizeof A.acct, "%s", sb_signed_in() ? sb_user_id() : ""); take_tokens(j); L.done = 1; fprintf(stderr, "[trakt] this TV is connected\n"); ask_user(); }
   else if (st == 400 || st == 0) { } /* not entered yet (or no answer): asked again at the interval */
   else if (st == 429) L.interval += 5; /* Trakt asks for slower polling */
   else { L.over = 1; snprintf(L.err, sizeof L.err, "%s", T(st == 418 ? "Trakt access was refused" : st == 410 || st == 404 ? "The code expired. Try again" : st == 409 ? "This code was already used. Try again" : "Couldn’t connect to Trakt. Try again"));
@@ -158,7 +166,7 @@ int scrobble_delete(const char *path, NetCb cb, void *ud) {
   return net_send("DELETE", url, h, "", 0, 20000, cb, ud) != 0; }
 void scrobble_unlink(void) {
   if (A.access[0]) { cJSON *o = cJSON_CreateObject(); cJSON_AddStringToObject(o, "token", A.access); cJSON_AddStringToObject(o, "client_id", A.client); post(AUTH "/oauth/revoke", o, 0, NULL, NULL); } /* (best effort: the tokens go here whatever it answers) */
-  auth_clear(); fprintf(stderr, "[trakt] disconnected\n");
+  scrobble_link_cancel(); auth_clear(); fprintf(stderr, "[trakt] disconnected\n");
 }
 
 /* ---- what Trakt is told: a short queue, sent one at a time, in order ---- */
@@ -168,6 +176,7 @@ typedef struct { int kind, tries; char key[160]; char *body; double notBefore, m
 static Job Q[QN]; static int qn, inFlight;
 static const char *KIND[3] = { "start", "pause", "stop" };
 static void q_drop(int i) { free(Q[i].body); memmove(&Q[i], &Q[i + 1], sizeof(Job) * (size_t)(qn - i - 1)); qn--; }
+static void clear_jobs(void) { while (qn) q_drop(qn - 1); inFlight = 0; }
 static void q_add(int kind, const char *key, cJSON *body) {
   if (kind != J_STOP) for (int i = qn - 1; i >= (inFlight ? 1 : 0); i--) if (Q[i].kind != J_STOP && !strcmp(Q[i].key, key)) q_drop(i); /* a newer start / pause of the same item replaces one not sent yet */
   if (qn == QN) { int i = 0; while (i < qn && (Q[i].kind == J_STOP || (inFlight && i == 0))) i++; if (i == qn) i = inFlight ? 1 : 0; if (i < qn) q_drop(i); } /* full: the oldest start / pause goes first */
@@ -175,7 +184,7 @@ static void q_add(int kind, const char *key, cJSON *body) {
   Job *j = &Q[qn++]; memset(j, 0, sizeof *j); j->kind = kind; snprintf(j->key, sizeof j->key, "%s", key); j->body = s; j->made = mono();
 }
 static void on_sent(int st, const unsigned char *b, size_t n, void *ud) {
-  (void)b; (void)n; (void)ud; inFlight = 0; if (!qn) return; Job *j = &Q[0];
+  (void)b; (void)n; if ((uintptr_t)ud != authGeneration) return; inFlight = 0; if (!qn) return; Job *j = &Q[0];
   if (st == 201 || st == 200 || st == 409) { fprintf(stderr, "[trakt] %s sent%s\n", KIND[j->kind], st == 409 ? " (already watched just now)" : ""); q_drop(0); return; }
   if (st == 404 || st == 422 || st == 400) { fprintf(stderr, "[trakt] %s not taken (%d): Trakt doesn't know this item or its progress\n", KIND[j->kind], st); q_drop(0); return; }
   if (st == 401 || st == 403) { fprintf(stderr, "[trakt] %s refused (%d): renewing the access\n", KIND[j->kind], st); if (A.state == TRAKT_LINKED) refresh_now(); j->tries++; if (j->tries > 2) q_drop(0); return; }
@@ -201,7 +210,7 @@ void scrobble_tick(void) {
   Job *j = &Q[0]; double now = mono(); if (now < j->notBefore) return;
   if (j->kind != J_STOP && now - j->made > 600) { q_drop(0); return; } /* a start / pause ten minutes old says nothing true any more */
   char url[96], h[512]; snprintf(url, sizeof url, API "/scrobble/%s", KIND[j->kind]); headers(h, sizeof h, 1);
-  inFlight = 1; if (!net_post_hdr_t(url, j->body, "application/json", h, 20000, on_sent, NULL)) { inFlight = 0; j->notBefore = now + 15; }
+  inFlight = 1; if (!net_post_hdr_t(url, j->body, "application/json", h, 20000, on_sent, (void *)authGeneration)) { inFlight = 0; j->notBefore = now + 15; }
 }
 
 /* ---- the player's item, followed ---- */

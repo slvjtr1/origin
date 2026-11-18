@@ -332,7 +332,10 @@ static void push_req(Req *r) { /* under mu */
 }
 /* one that is waited on as the user types (search suggestions): ahead of everything queued */
 unsigned net_get_first(const char *url, NetCb cb, void *ud) {
-  Req *r = calloc(1, sizeof *r); r->url = strdup(url); r->cb = cb; r->ud = ud;
+  Req *r = calloc(1, sizeof *r);
+  if (r) r->url = strdup(url ? url : "");
+  if (!r || !r->url) { req_free(r); return fail_later(cb, ud); }
+  r->cb = cb; r->ud = ud;
   pthread_mutex_lock(&mu); r->id = nextId++; r->next = queue; queue = r; if (!queueTail) queueTail = r; npending++; pthread_cond_signal(&cv); pthread_mutex_unlock(&mu); return r->id; }
 static unsigned enqueue_x(const char *url, const char *hdr, const char *post, const char *ctype, long timeoutMs, int size, NetCb cb, void *ud) {
   Req *r = calloc(1, sizeof *r);

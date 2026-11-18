@@ -20,7 +20,7 @@ typedef struct {
   int ep; char epName[256];      /* an episode card on a title page: its menu offers the streams */
   int newEp; double airAt;       /* Continue Watching: new episodes out since it was watched; Upcoming: when it airs */
 } Item;
-typedef struct { Item *items; int n; int total; /* total: the metas in the answer (a page may hold more than kept); -1: the source did not answer */ } ItemList;
+typedef struct { Item *items; int n; int total; int consumed; /* total: the metas in the answer (a page may hold more than kept); -1: the source did not answer */ } ItemList;
 
 /* url: the first page as asked (also the cache's name); path: the address before the extra part, extra: what the
    first page is asked with (a required property's first option, or none), skip: the catalog takes "skip" (pages) */

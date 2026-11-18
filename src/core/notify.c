@@ -107,13 +107,21 @@ int notify_new(const cJSON *it, char *vid, size_t cap, double *newestAt) {
   return cnt;
 }
 static int cmp_air(const void *a, const void *b) { double x = ((const Item *)a)->airAt, y = ((const Item *)b)->airAt; return x < y ? -1 : x > y; }
+static const char *up_hide_key(void) {
+  static char key[128];
+  const char *id = sb_user_id();
+  if (!id || !*id) return NULL;
+  snprintf(key, sizeof key, "upHide:%s", id); return key;
+}
 int notify_upcoming(ItemList *out) {
+  const char *key = up_hide_key();
+  cJSON *hidden = key ? store_node(key) : NULL;
   memset(out, 0, sizeof *out); cJSON *n = node(); const cJSON *up = n ? cJSON_GetObjectItem(n, "up") : NULL; int m = cJSON_GetArraySize(up); if (m <= 0) return 0;
   out->items = calloc((size_t)m, sizeof(Item)); if (!out->items) return 0;
   double now = (double)time(NULL); const cJSON *u;
   cJSON_ArrayForEach(u, up) { double r = js_num(u, "r", 0); if (r <= now || r > now + AHEAD) continue; /* (aired since it was asked: no longer coming) */
     const cJSON *l = lib_get(js_str(u, "sid", "")); if (!l || !eligible(l)) continue;
-    if (cJSON_GetObjectItemCaseSensitive(store_node("upHide"), js_str(u, "id", ""))) continue; /* dismissed by hand: until the next episode is the one coming */
+    if (cJSON_GetObjectItemCaseSensitive(hidden, js_str(u, "id", ""))) continue; /* dismissed by hand: until the next episode is the one coming */
     Item *it = &out->items[out->n++]; memset(it, 0, sizeof *it);
     snprintf(it->id, sizeof it->id, "%s", js_str(l, "_id", "")); snprintf(it->type, sizeof it->type, "series"); snprintf(it->name, sizeof it->name, "%s", js_str(l, "name", ""));
     snprintf(it->poster, sizeof it->poster, "%s", js_str(l, "poster", "")); snprintf(it->background, sizeof it->background, "%s", js_str(l, "background", "")); snprintf(it->logo, sizeof it->logo, "%s", js_str(l, "logo", ""));
@@ -144,8 +152,8 @@ int notify_cw_hidden(const cJSON *l, double newestNew) {
   return !(newestNew > js_num(o, "at", 0)); /* an episode out since the dismissal: back */
 }
 void notify_up_dismiss(const Item *it) {
-  if (!it->videoId[0]) return; cJSON *n = hide_node("upHide"); double now = (double)time(NULL);
+  const char *key = up_hide_key(); if (!key || !it->videoId[0]) return; cJSON *n = hide_node(key); double now = (double)time(NULL);
   cJSON_DeleteItemFromObjectCaseSensitive(n, it->videoId); cJSON_AddNumberToObject(n, it->videoId, it->airAt > 0 ? it->airAt : now);
   cJSON *e = n->child; while (e) { cJSON *nx = e->next; if (cJSON_IsNumber(e) && e->valuedouble < now - 86400) cJSON_Delete(cJSON_DetachItemViaPointer(n, e)); e = nx; } /* (aired: no longer needed) */
-  store_set_node("upHide", n); fprintf(stderr, "[upcoming] dismissed %s\n", it->videoId);
+  store_set_node(key, n); fprintf(stderr, "[upcoming] dismissed %s\n", it->videoId);
 }

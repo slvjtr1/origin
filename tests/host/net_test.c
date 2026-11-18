@@ -117,6 +117,11 @@ int main(void) {
   { /* no memory at all for a request: its callback still comes, once, with 0 */
     Got g = { 0 }; __atomic_store_n(&faAll, 1, __ATOMIC_RELEASE); unsigned id = net_get("fake://a?n=10", on_done, &g); __atomic_store_n(&faAll, 0, __ATOMIC_RELEASE);
     CHECK(id != 0); pump_until(&g, 1, 2); CHECK(g.calls == 1); CHECK(g.status == 0); CHECK(net_pending() == 0); }
+  for (int k = 1; k <= 2; k++) {
+    Got g = { 0 }; __atomic_store_n(&faCountdown, k, __ATOMIC_RELEASE);
+    net_get_first("fake://priority", on_done, &g); pump_until(&g, 1, 5);
+    CHECK(g.calls == 1 && g.status == 0); CHECK(net_pending() == 0);
+  }
   { /* each allocation in turn made to fail: one callback each, nothing stuck, nothing counted */
     int bad = 0; for (int k = 1; k <= 12; k++) { Got g = { 0 }; __atomic_store_n(&faCountdown, k, __ATOMIC_RELEASE);
       net_get_hdr("fake://f?n=70000", "X-Test: 1", on_done, &g); pump_until(&g, 1, 5); __atomic_store_n(&faCountdown, 0, __ATOMIC_RELEASE);

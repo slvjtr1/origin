@@ -122,7 +122,7 @@ static void merge(void) {
   Item *out = calloc(SMAX, sizeof(Item)); int n = build(out);
   int all = S.topDone && !S.catPending && S.collDone; for (int c = 0; c < S.ncat; c++) all = all && S.catDone[c];
   if (S.staged) { char pu[512]; for (int i = 0; i < n && i < 12; i++) { sb_poster_of(&out[i], pu, sizeof pu); if (pu[0]) img_prefetch(pu, 236, 354); } /* (the posters on their way in reading order, before they show) */
-    if (!(S.topDone && (all || (S.firstAt > 0 && app_now() - S.firstAt >= 0.9)))) { free(out); S.loading = 1; S.final = 0; return; }
+    if (!(all || (S.firstAt > 0 && app_now() - S.firstAt >= 0.9))) { free(out); S.loading = 1; S.final = 0; return; }
     S.staged = 0; show(out, n); }
   else { Item *keep = calloc(SMAX, sizeof(Item)); int m = 0; for (int i = 0; i < S.items.n && m < SMAX; i++) keep[m++] = S.items.items[i]; /* (shown already: late answers only add at the end) */
     for (int i = 0; i < n && m < SMAX; i++) { int dup = 0; for (int d = 0; d < m; d++) if (same_title(&keep[d], &out[i])) dup = 1; if (!dup) keep[m++] = out[i]; }
@@ -140,7 +140,7 @@ static void on_coll(int status, const unsigned char *body, size_t len, void *ud)
   cJSON *j = status == 200 && body ? cJSON_ParseWithLength((const char *)body, len) : NULL; const cJSON *r; int n = 0; Item *it = calloc(2, sizeof(Item));
   if (it) cJSON_ArrayForEach(r, js_arr(j, "results")) { if (n >= 2) break; const char *nm = js_str(r, "name", ""), *pp = js_str(r, "poster_path", ""); int id = (int)js_num(r, "id", 0);
     if (!id || !*nm || !*pp || !words_in(S.q, nm)) continue; Item *x = &it[n++]; snprintf(x->type, sizeof x->type, "collection"); snprintf(x->id, sizeof x->id, "coll:t%d", id); snprintf(x->name, sizeof x->name, "%s", nm); snprintf(x->poster, sizeof x->poster, "https://image.tmdb.org/t/p/w342%s", pp); }
-  cJSON_Delete(j); S.coll.items = it; S.coll.n = n; if (n) fprintf(stderr, "[search] %d collection(s) for the query\n", n); /* (never the words typed: the log may be shared) */ merge(); }
+  cJSON_Delete(j); S.coll.items = it; S.coll.n = n; if (n && !S.firstAt) S.firstAt = app_now(); if (n) fprintf(stderr, "[search] %d collection(s) for the query\n", n); /* (never the words typed: the log may be shared) */ merge(); }
 static void on_sug(ItemList *l, char names[6][128], int nn, void *ud) {
   if ((unsigned)(uintptr_t)ud != S.tok) { if (l) itemlist_free(l); return; }
   itemlist_clear(&S.top); S.topFail = !l || l->total < 0; if (l) { S.top = *l; free(l); }
@@ -188,7 +188,7 @@ static void hist_add(const char *q) {
 static void hist_clear(void) { hist_load(); nhist = 0; histSaved[0] = 0; hist_write(); S.nsug = 0; S.hist = 0; S.zone = 0; toast(T("Search history cleared"), 2000, NULL); }
 static void live(void) {
   char q[128]; snprintf(q, sizeof q, "%s", S.q); char *e = q + strlen(q); while (e > q && e[-1] == ' ') *--e = 0; const char *p = q; while (*p == ' ') p++;
-  S.tok++; S.topDone = 0; S.topFail = 0; S.allFailed = 0; for (int c = 0; c < S.ncat; c++) { S.catDone[c] = 0; S.catFail[c] = 0; itemlist_clear(&S.cat[c]); } S.ncat = 0; S.drawn = 1;
+  S.tok++; S.catPending = 0; S.topDone = 0; S.topFail = 0; S.allFailed = 0; for (int c = 0; c < S.ncat; c++) { S.catDone[c] = 0; S.catFail[c] = 0; itemlist_clear(&S.cat[c]); } S.ncat = 0; S.drawn = 1;
   itemlist_clear(&S.top); itemlist_clear(&S.coll); S.collDone = 1; S.firstAt = 0;
   if (!*p || sb_text_blocked(p)) { show(calloc(1, sizeof(Item)), 0); S.nsug = 0; S.hist = 0; if (!*p) hist_show(); S.loading = 0; S.final = 1; S.staged = 0; results_draw_state(); return; } /* (nothing looked up for it: the titles fade out where they are, the recent searches under it) */
   S.hist = 0;
@@ -281,7 +281,7 @@ static void tick(float dt) {
   if (S.livePending && app_now() >= S.liveAt) { S.livePending = 0; live(); }
   if (S.catPending && app_now() >= S.catAt) { S.catPending = 0; cat_go(); }
   if (S.q[0] && S.final && S.items.n && typedAt && app_now() - typedAt > 4 && strcmp(histSaved, S.q)) hist_add(S.q); /* results looked at a while: kept too */
-  if (S.staged && S.topDone && S.firstAt > 0 && app_now() - S.firstAt >= 0.9) merge(); /* (a slow catalog never holds the rest back) */
+  if (S.staged && S.firstAt > 0 && app_now() - S.firstAt >= 0.9) merge(); /* (a slow catalog never holds the rest back) */
   { int k = 0; for (int i = 0; i < S.ngh; i++) if (app_now() - S.gh[i].goneAt < 0.2) S.gh[k++] = S.gh[i]; S.ngh = k; }
   int act = !topNav.active;
   float x, y, w; key_rect(key_at(S.kr, S.kc), &x, &y, &w);

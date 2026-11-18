@@ -353,7 +353,7 @@ static int meta_junk(const Item *it) {
 }
 static ItemList *list_from_metas_c(const cJSON *metas, const char *type, int max, int clean) {
   ItemList *l = calloc(1, sizeof *l); int n = cJSON_GetArraySize(metas); l->total = n; if (n > max) n = max; l->items = calloc(n ? n : 1, sizeof(Item));
-  const cJSON *m; cJSON_ArrayForEach(m, metas) { if (l->n >= n) break; Item *it = &l->items[l->n]; sb_fill_item(it, m, type); if (!it->id[0]) continue;
+  const cJSON *m; cJSON_ArrayForEach(m, metas) { if (l->n >= n) break; l->consumed++; Item *it = &l->items[l->n]; sb_fill_item(it, m, type); if (!it->id[0]) continue;
     if (clean && (meta_junk(it) || meta_blocked(m, it))) continue; l->n++; }
   return l;
 }

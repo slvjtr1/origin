@@ -1,0 +1,15 @@
+name: webOS checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install host test headers
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev libcurl4-openssl-dev
+      - name: Trakt account and playback tests
+        run: bash tests/scrobble/run.sh
+      - name: Network and platform tests
+        run: bash tests/host/run.sh

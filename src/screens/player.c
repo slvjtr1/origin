@@ -647,14 +647,15 @@ static void auto_sub(void) {
   if (!strcmp(pk, "off")) { P.autoSubDone = 1; return; } /* this show: none, as chosen */
   const char *w = *pk ? js_str(sp, "sl", "") : want_sub(); if (!*w) return;
   if (!P.autoSubAt) P.autoSubAt = now_(); double waited = now_() - P.autoSubAt;
+  int fo = want_forced();
   again:;
   if (!strcmp(pk, "ext") && (P.nExt || P.nAdx)) { /* this show's file from an addon: the same addon first, the language */
     for (int pass = 0; pass < 2; pass++) { if (pass && (*pn ? P.adxLoading : P.extLoading) && !P.sameWaitOver) { if (!P.sameWaitAt) P.sameWaitAt = now_() + 10; return; } /* (any addon's file in that language only once the list that may hold the same addon's is in, or 10 s on) */
-      for (int i = 0; i < P.nAdx; i++) if (lang_match(P.adx[i].lang, w) && (pass || !strcmp(P.adx[i].addon, pn))) { P.autoSubDone = 1; set_ext_sub(2, &P.adx[i]); sync_auto_arm(); return; }
-      for (int i = 0; i < P.nExt; i++) if (lang_match(P.ext[i].lang, w) && (pass || !strcmp(P.ext[i].addon, pn))) { P.autoSubDone = 1; set_ext_sub(1, &P.ext[i]); sync_auto_arm(); return; } }
+      for (int i = 0; i < P.nAdx; i++) if (lang_match(P.adx[i].lang, w) && (!fo || P.adx[i].forced) && (pass || !strcmp(P.adx[i].addon, pn))) { P.autoSubDone = 1; set_ext_sub(2, &P.adx[i]); sync_auto_arm(); return; }
+      for (int i = 0; i < P.nExt; i++) if (lang_match(P.ext[i].lang, w) && (!fo || P.ext[i].forced) && (pass || !strcmp(P.ext[i].addon, pn))) { P.autoSubDone = 1; set_ext_sub(1, &P.ext[i]); sync_auto_arm(); return; } }
     if (P.extLoading || P.adxLoading) return; } /* (the lists still coming) */
-  if (!strcmp(pk, "emb") && *pn) for (int j = 0; j < P.nEmb; j++) if (lang_match(P.emb[j].lang, w) && !strcmp(P.emb[j].name, pn)) { P.autoSubDone = 1; set_emb_sub(P.emb[j].idx); return; } /* the same track by its name */
-  int fo = want_forced(), em = -1;
+  if (!strcmp(pk, "emb") && *pn) for (int j = 0; j < P.nEmb; j++) if (lang_match(P.emb[j].lang, w) && (!fo || emb_forced(&P.emb[j])) && !strcmp(P.emb[j].name, pn)) { P.autoSubDone = 1; set_emb_sub(P.emb[j].idx); return; } /* the same track by its name */
+  int em = -1;
   /* 1. the addons' (the stream's own and every subtitles addon's): the variant asked for first (Brazilian for Brazilian), then any */
   for (int pass = 0; pass < 2; pass++) for (int i = 0; i < P.nAdx; i++) if (lang_match(P.adx[i].lang, w) && (!fo || P.adx[i].forced) && (pass || variant_ok(P.adx[i].lang, w))) { P.autoSubDone = 1; fprintf(stderr, "[subs] chosen by itself: an addon's (%s)\n", P.adx[i].addon); set_ext_sub(2, &P.adx[i]); sync_auto_arm(); return; }
   if (P.adxLoading && waited < 12) return; /* the addons get 12 s to answer */
@@ -669,12 +670,13 @@ static void auto_sub(void) {
     fprintf(stderr, "[subs] no %s for this show here: the settings' %s\n", w, want_sub()); pk = ""; pn = ""; w = want_sub(); goto again; }
   /* 4. nothing anywhere in the default language: the second one (Settings > Subtitles), in the same order */
   const char *w2 = store_get("subsLang2", ""); if (!*w2 || lang_match(w2, w)) return;
-  for (int i = 0; i < P.nAdx; i++) if (lang_match(P.adx[i].lang, w2)) { P.autoSubDone = 1; fprintf(stderr, "[subs] chosen by itself: an addon's, second language (%s)\n", P.adx[i].addon); set_ext_sub(2, &P.adx[i]); sync_auto_arm(); return; }
-  for (int i = 0; i < P.nExt; i++) if (lang_match(P.ext[i].lang, w2)) { P.autoSubDone = 1; fprintf(stderr, "[subs] chosen by itself: OpenSubtitles, second language\n"); set_ext_sub(1, &P.ext[i]); sync_auto_arm(); return; }
-  em = -1; for (int j = 0; j < P.nEmb; j++) if (lang_match(P.emb[j].lang, w2) && (em < 0 || (P.emb[em].forced && !P.emb[j].forced))) em = j;
+  for (int pass = 0; pass < 2; pass++) for (int i = 0; i < P.nAdx; i++) if (lang_match(P.adx[i].lang, w2) && (!fo || P.adx[i].forced) && (pass || variant_ok(P.adx[i].lang, w2))) { P.autoSubDone = 1; fprintf(stderr, "[subs] chosen by itself: an addon's, second language (%s)\n", P.adx[i].addon); set_ext_sub(2, &P.adx[i]); sync_auto_arm(); return; }
+  for (int pass = 0; pass < 2; pass++) for (int i = 0; i < P.nExt; i++) if (lang_match(P.ext[i].lang, w2) && (!fo || P.ext[i].forced) && (pass || variant_ok(P.ext[i].lang, w2))) { P.autoSubDone = 1; fprintf(stderr, "[subs] chosen by itself: OpenSubtitles, second language\n"); set_ext_sub(1, &P.ext[i]); sync_auto_arm(); return; }
+  em = -1; for (int j = 0; j < P.nEmb; j++) if (lang_match(P.emb[j].lang, w2) && (!fo || emb_forced(&P.emb[j])) && (em < 0 || (P.emb[em].forced && !P.emb[j].forced))) em = j;
   if (em >= 0) { P.autoSubDone = 1; fprintf(stderr, "[subs] chosen by itself: the file's own track, second language\n"); set_emb_sub(P.emb[em].idx); return; }
 }
 /* a trailer's captions (IMDb's or YouTube's): handed over with the trailer, read when the CC button turns them on */
+static unsigned subtitleRequestSerial;
 static TrailerSub trSubs[TRAILER_MAX_SUBS], trNext[TRAILER_MAX_SUBS]; static int trSubsN, trNextN;
 void player_trailer_subs(const TrailerSub *subs, int n) { if (n > TRAILER_MAX_SUBS) n = TRAILER_MAX_SUBS; if (n < 0 || !subs) n = 0; if (n) memcpy(trNext, subs, n * sizeof *subs); trNextN = n; }
 static void on_tr_cues(Cue *cues, int n, void *ud) {
@@ -707,13 +709,13 @@ static int hashable(const char *u) { return !strncmp(u, "http", 4) && !strstr(u,
 static char artName[256], artPoster[512], artBg[512], artLogo[512]; /* the next play's title and pictures as handed over (a phone's) */
 static SubEntry castSubs[16]; static int castSubsN = -1; /* the next play's subtitles as a phone sent them (-1: none sent) */
 static void load_ext_subs(int n) { if (!P.type[0] || !P.vid[0] || P.isTrailer) return; P.extLoading = 1;
-  if (castSubsN >= 0) { int k = castSubsN; castSubsN = -1; SubEntry *l = calloc(16, sizeof *l); memcpy(l, castSubs, sizeof castSubs); P.subReq++; on_subs(l, k, 1, (void *)(uintptr_t)P.subReq); return; } /* cast: the phone's own list */
+  if (castSubsN >= 0) { int k = castSubsN; castSubsN = -1; SubEntry *l = calloc(16, sizeof *l); memcpy(l, castSubs, sizeof castSubs); P.subReq = ++subtitleRequestSerial; on_subs(l, k, 1, (void *)(uintptr_t)P.subReq); return; } /* cast: the phone's own list */
   if (getenv("SB_PLAY_SUBS")) { SubEntry *l = calloc(16, sizeof *l); int k = 0; char b[4096]; snprintf(b, sizeof b, "%s", getenv("SB_PLAY_SUBS")); /* development: "url,url,..." as the external list */
     for (char *u = strtok(b, ","); u && k < 16; u = strtok(NULL, ",")) { snprintf(l[k].lang, sizeof l[k].lang, "eng"); snprintf(l[k].name, sizeof l[k].name, "English"); snprintf(l[k].url, sizeof l[k].url, "%s", u); l[k].n = k + 1; l[k].from = SUB_FALLBACK; k++; }
-    P.subReq++; on_subs(l, k, 1, (void *)(uintptr_t)P.subReq); return; }
-  P.extTry = n; P.subReq++; subs_list(P.type, P.vid, on_subs, (void *)(uintptr_t)P.subReq); }
+    P.subReq = ++subtitleRequestSerial; on_subs(l, k, 1, (void *)(uintptr_t)P.subReq); return; }
+  P.extTry = n; P.subReq = ++subtitleRequestSerial; subs_list(P.type, P.vid, on_subs, (void *)(uintptr_t)P.subReq); }
 static void load_addon_subs(int n) { if (!P.type[0] || !P.vid[0] || P.isTrailer || getenv("SB_PLAY_SUBS")) return;
-  P.adxTry = n; P.adxReq++; P.nSubAddons = subs_addons_for(P.type, P.vid);
+  P.adxTry = n; P.adxReq = ++subtitleRequestSerial; P.nSubAddons = subs_addons_for(P.type, P.vid);
   SubQuery q; memset(&q, 0, sizeof q); snprintf(q.type, sizeof q.type, "%s", P.type); snprintf(q.vid, sizeof q.vid, "%s", P.vid); snprintf(q.url, sizeof q.url, "%s", P.url);
   snprintf(q.filename, sizeof q.filename, "%s", P.st.filename); snprintf(q.hash, sizeof q.hash, "%s", P.st.hash); q.size = P.st.size > 0 ? P.st.size : P.size; q.hashable = hashable(P.url);
   SubEntry *own = NULL; int nown = sb_stream_subs(&P.st, &own);
@@ -1883,8 +1885,8 @@ static void choose(TItem *it) {
       video_unload(); P.live = 0; P.liveT0 = 0; hls_conv_start(P.url, ord, fl); fprintf(stderr, "[dts] audio track %d instead (%s)\n", ord, P.dts.copyA ? "copied" : "converted"); }
     render_tray(0); }
   else if (it->k == 4 && P.tray.kind == 3 && it->i == (P.curAud >= 0 ? P.curAud : video_audio_current())) { /* the track that already plays (the only one, often): nothing to switch, the tray closes; still the show's choice from now on (from Android TV's 10c87a66) */
-    P.autoAudDone = 1; { VidTrack ts[16]; int n = video_audio_tracks(ts, 16); for (int i = 0; i < n; i++) if (ts[i].idx == it->i) show_pref_aud(ts[i].lang, ts[i].name); } fprintf(stderr, "[audio] the track playing chosen again: the tray closes\n"); close_tray(); }
-  else if (it->k == 4 && P.tray.kind == 3) { P.autoAudDone = 1; set_audio(it->i); { VidTrack ts[16]; int n = video_audio_tracks(ts, 16); for (int i = 0; i < n; i++) if (ts[i].idx == it->i) show_pref_aud(ts[i].lang, ts[i].name); } render_tray(0); }
+    P.autoAudDone = 1; { VidTrack ts[16]; int n = aud_list(ts, 16); for (int i = 0; i < n; i++) if (ts[i].idx == it->i) show_pref_aud(ts[i].lang, ts[i].name); } fprintf(stderr, "[audio] the track playing chosen again: the tray closes\n"); close_tray(); }
+  else if (it->k == 4 && P.tray.kind == 3) { P.autoAudDone = 1; set_audio(it->i); { VidTrack ts[16]; int n = aud_list(ts, 16); for (int i = 0; i < n; i++) if (ts[i].idx == it->i) show_pref_aud(ts[i].lang, ts[i].name); } render_tray(0); }
   else if (it->k == 2 && P.tray.kind == 6) { const LiveCh *c = live_lineup_item(it->i); if (c && strcmp(c->id, P.id)) { close_tray(); Item t; live_item(c, &t); live_start(&t, NULL, 0, 1); } else close_tray(); } /* a channel: switched to (the picture stays until it is found) */
   else if (it->k == 2 && it->hid) { spoil_reveal(js_str(it->v, "id", "")); it->hid = 0; sound_play(SND_TOGGLE); } /* a hidden episode: OK shows it first (its blur fading off) */
   else if (it->k == 2) { /* an episode: its sources, right here */
@@ -2190,9 +2192,9 @@ static void prepare(const char *vid, double startAt, int keepSubs) {
   if (again) { video_unload(); hls_conv_stop(); P.live = 0; asssubs_close(); if (mkv) { prevspike_stop(); sp_close(); mkv_close(mkv); mkv = NULL; } if (P.isP2p || P.resolving) p2p_player_switching(); } /* (another source inside the player: the torrent kept until the next one is known, p2p.c) */
   SubEntry *keep = NULL, *keepA = NULL; int nkeep = 0, nkeepA = 0; if (again && keepSubs && !strcmp(vid, P.vid)) { if (P.nExt) { keep = P.ext; nkeep = P.nExt; P.ext = NULL; } if (P.nAdx) { keepA = P.adx; nkeepA = P.nAdx; P.adx = NULL; } }
   cJSON *meta = P.meta; P.meta = NULL; subs_free(P.cues, P.ncues); free(P.ext); free(P.adx); srcs_free(); cols_clear();
-  char id[SB_ID]; snprintf(id, sizeof id, "%s", P.id); char name[256]; snprintf(name, sizeof name, "%s", P.name); char poster[512]; snprintf(poster, sizeof poster, "%s", P.poster); char bg[512]; snprintf(bg, sizeof bg, "%s", P.bg); char logo[512]; snprintf(logo, sizeof logo, "%s", P.logo); unsigned subReq = P.subReq, adxReq = P.adxReq;
+  char id[SB_ID]; snprintf(id, sizeof id, "%s", P.id); char name[256]; snprintf(name, sizeof name, "%s", P.name); char poster[512]; snprintf(poster, sizeof poster, "%s", P.poster); char bg[512]; snprintf(bg, sizeof bg, "%s", P.bg); char logo[512]; snprintf(logo, sizeof logo, "%s", P.logo);
   char v[SB_VID]; snprintf(v, sizeof v, "%s", vid && *vid ? vid : id);
-  sync_stop(0); memset(&P, 0, sizeof P); sub_reset(); P.subReq = subReq; P.adxReq = adxReq; P.open = 1; P.openedAt = now_(); P.seekT = -1; P.curAud = -1; snprintf(P.curSub, sizeof P.curSub, "off");
+  sync_stop(0); memset(&P, 0, sizeof P); sub_reset(); P.open = 1; P.openedAt = now_(); P.seekT = -1; P.curAud = -1; snprintf(P.curSub, sizeof P.curSub, "off");
   snprintf(P.type, sizeof P.type, "%s", type); snprintf(P.id, sizeof P.id, "%s", id); snprintf(P.vid, sizeof P.vid, "%s", v); if (aud_original_mode()) (void)tmdb_orig_lang(P.id); /* (Original audio: its language on its way while the film loads) */ snprintf(P.name, sizeof P.name, "%s", name); snprintf(P.poster, sizeof P.poster, "%s", poster); snprintf(P.bg, sizeof P.bg, "%s", bg); snprintf(P.logo, sizeof P.logo, "%s", logo);
   P.meta = meta; P.ext = keep; P.nExt = nkeep; P.adx = keepA; P.nAdx = nkeepA; P.startAt = startAt; aspect_load(); set_status("");
   if (!strcmp(P.type, "series")) { const char *c = strrchr(P.vid, ':'); if (c && c > P.vid) { const char *q = c - 1; while (q > P.vid && *q != ':') q--; if (*q == ':') { P.season = atoi(q + 1); P.episode = atoi(c + 1); } } } /* known from the id, the metadata or not */

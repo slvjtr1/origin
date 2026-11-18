@@ -1,45 +1,25 @@
 {
-  "version": "1.5.0",
+  "version": "1.5.1",
   "items": [
     {
       "icon": "wn_live",
-      "title": "Live TV",
-      "text": "Channels and sports from your live addons, with Favorites and Recent."
+      "title": "Account switching",
+      "text": "Trakt activity, profiles and upcoming episode dismissals stay with your account."
     },
     {
       "icon": "trakt",
-      "title": "Trakt",
-      "text": "What you watch tracked, watched marks, Continue Watching and Trakt rows on Home. Bring your own Client ID."
+      "title": "Playback preferences",
+      "text": "Subtitle requests follow the current title. Forced subtitles and per-show audio choices work across more sources."
     },
     {
       "icon": "wn_av",
-      "title": "Seek previews",
-      "text": "A picture of the film on the seek bar as you move through it, for debrid and direct links."
+      "title": "Discover and search",
+      "text": "Browse longer catalogs and see available search results while slower sources respond."
     },
     {
       "icon": "wn_new",
-      "title": "Chapters",
-      "text": "The film's chapters on the seek bar and in the seek pill. Settings › Seek bar."
-    },
-    {
-      "icon": "wn_opts",
-      "title": "Tracks per show",
-      "text": "The subtitles and audio you pick stay for the whole show."
-    },
-    {
-      "icon": "wn_subs",
-      "title": "Subtitles your way",
-      "text": "20 fonts for Latin and Arabic, brightness, position and forced-only subtitles, set while you watch."
-    },
-    {
-      "icon": "collection",
       "title": "Film collections",
-      "text": "On the title page, in Search and in the Library."
-    },
-    {
-      "icon": "spoilEye",
-      "title": "No spoilers",
-      "text": "Episodes you haven't watched: their pictures blurred, their stories hidden too if you like. Settings › Appearance."
+      "text": "Collection pages recover from delayed title lookups and finish loading when a source is unavailable."
     }
   ]
 }

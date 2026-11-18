@@ -72,7 +72,7 @@ static void on_ext(int st, const unsigned char *b, size_t len, void *ud) {
 }
 static void on_list(int st, const unsigned char *b, size_t len, void *ud) {
   (void)len; Job *j = ud; cJSON *x = st == 200 ? net_json(b) : NULL; const cJSON *rs = js_arr(x, "results");
-  if (rs && !cJSON_GetArraySize(rs) && j->ai < j->nalt) { net_json_free(x); fprintf(stderr, "[search] nothing: asked again as \"%s\"\n", j->alt[j->ai]); if (tmdb_request(j->alt[j->ai++], on_list, j)) return; j->cb(404, NULL, 0, j->ud); free(j); return; } /* a spelling slip: the next way of writing it */
+  if (rs && !cJSON_GetArraySize(rs) && j->ai < j->nalt) { net_json_free(x); fprintf(stderr, "[search] retrying alternate spelling\n"); if (tmdb_request(j->alt[j->ai++], on_list, j)) return; j->cb(404, NULL, 0, j->ud); free(j); return; } /* a spelling slip: the next way of writing it */
   if (!rs) { net_json_free(x); j->cb(st == 200 ? 404 : (st ? st : -1), NULL, 0, j->ud); free(j); return; }
   map_load(); j->res = cJSON_Duplicate(rs, 1); net_json_free(x); j->pending = 1; /* (the list's own count, let go below) */
   const cJSON *r; cJSON_ArrayForEach(r, j->res) {

@@ -70,10 +70,10 @@ static void tts_save(void) { cJSON *j = cJSON_CreateObject(); for (int i = 0; i 
 
 /* ---- TMDB calls: a queue, a few at once ---- */
 enum { T_FIND, T_MOVIE, T_COLL, T_EXT };
-typedef struct { int kind; char path[160], ref[24]; } TReq;
+typedef struct { int kind, tries; double retryAt; char path[160], ref[24]; } TReq;
 static TReq tq[512]; static int ntq, tFly;
 static void tm_push(int kind, const char *path, const char *ref) { for (int i = 0; i < ntq; i++) if (tq[i].kind == kind && !strcmp(tq[i].path, path)) return; if (ntq >= 512) return;
-  TReq *r = &tq[ntq++]; r->kind = kind; snprintf(r->path, sizeof r->path, "%s", path); snprintf(r->ref, sizeof r->ref, "%s", ref); }
+  TReq *r = &tq[ntq++]; r->tries = 0; r->retryAt = 0; r->kind = kind; snprintf(r->path, sizeof r->path, "%s", path); snprintf(r->ref, sizeof r->ref, "%s", ref); }
 static int have_tmdb(void) { char url[1200], hdr[480]; return tmdb_call("/configuration", url, sizeof url, hdr, sizeof hdr); }
 
 /* ---- a collection's titles ---- */
@@ -91,6 +91,15 @@ static int ce_load(CEnt *e) {
   char k[80]; ce_key(e, k, sizeof k); size_t len; unsigned char *b = cache_read(k, COLL_SECS, &len); if (!b) return 0; cJSON *j = cJSON_Parse((const char *)b); free(b); if (!cJSON_IsObject(j)) { cJSON_Delete(j); return 0; }
   snprintf(e->c.name, sizeof e->c.name, "%s", js_str(j, "name", "")); snprintf(e->c.overview, sizeof e->c.overview, "%s", js_str(j, "overview", "")); snprintf(e->c.poster, sizeof e->c.poster, "%s", js_str(j, "poster", "")); snprintf(e->c.backdrop, sizeof e->c.backdrop, "%s", js_str(j, "backdrop", ""));
   e->c.n = 0; const cJSON *p; cJSON_ArrayForEach(p, js_arr(j, "parts")) { if (e->c.n >= COLL_MAXPART) break; CollPart *x = &e->c.part[e->c.n++]; snprintf(x->id, sizeof x->id, "%s", js_str(p, "id", "")); snprintf(x->type, sizeof x->type, "%s", js_str(p, "type", "movie")); snprintf(x->name, sizeof x->name, "%s", js_str(p, "name", "")); snprintf(x->poster, sizeof x->poster, "%s", js_str(p, "poster", "")); x->year = (int)js_num(p, "year", 0); x->tmdb = (int)js_num(p, "tmdb", 0); }
+  for (int i = 0; i < e->c.n; i++) {
+    CollPart *part = &e->c.part[i];
+    if (!part->id[0] && part->tmdb > 0) {
+      const char *tt = tt_of(part->tmdb);
+      if (tt && is_tt(tt)) snprintf(part->id, sizeof part->id, "%s", tt);
+      else if (tt) { memmove(part, part + 1, (size_t)(e->c.n - i - 1) * sizeof *part); e->c.n--; i--; }
+      else { char path[64]; snprintf(path, sizeof path, "/movie/%d/external_ids", part->tmdb); tm_push(T_EXT, path, e->c.key); }
+    }
+  }
   int none = (int)js_num(j, "none", 0); cJSON_Delete(j); e->state = none || e->c.n < 2 ? 3 : 2; return 1;
 }
 static int cmp_part(const void *a, const void *b) { const CollPart *x = a, *y = b; int ya = x->year ? x->year : 9999, yb = y->year ? y->year : 9999; return ya - yb; }
@@ -193,12 +202,14 @@ static void on_tm(int st, const unsigned char *body, size_t len, void *ud) {
           const char *pp = js_str(p, "poster_path", ""); if (*pp) snprintf(x->poster, sizeof x->poster, "https://image.tmdb.org/t/p/w342%s", pp);
           if (!tt_of(id)) { char ep[64]; snprintf(ep, sizeof ep, "/movie/%d/external_ids", id); tm_push(T_EXT, ep, e->c.key); } }
         ce_tm_done(e); } } } /* (ready now: the IMDb ids follow, ce_tt_came) */
-  else if (r.kind == T_EXT) { int tid = atoi(r.path + 7); const char *tt = js_str(j, "imdb_id", ""); if (is_tt(tt)) tt_put(tid, tt); else if (j) tt_put(tid, "-");
+  else if (r.kind == T_EXT) { int tid = atoi(r.path + 7); const char *tt = js_str(j, "imdb_id", ""); if (is_tt(tt)) tt_put(tid, tt); else if (j || st == 404) tt_put(tid, "-");
+    else if (r.tries < 3 && ntq < 512) { r.tries++; r.retryAt = app_now() + (st == 429 ? 60 : 2 * r.tries); tq[ntq++] = r; }
     ce_tt_came(tid); }
   cJSON_Delete(j);
 }
 static void tm_send(void) {
-  while (tFly < TM_PAR && ntq) { TReq *r = malloc(sizeof *r); if (!r) return; *r = tq[0]; memmove(tq, tq + 1, sizeof tq[0] * (size_t)(ntq - 1)); ntq--;
+  while (tFly < TM_PAR && ntq) { int i = 0; while (i < ntq && tq[i].retryAt > app_now()) i++; if (i == ntq) return;
+    TReq *r = malloc(sizeof *r); if (!r) return; *r = tq[i]; memmove(tq + i, tq + i + 1, sizeof tq[0] * (size_t)(ntq - i - 1)); ntq--;
     char url[1200], hdr[480]; if (!tmdb_call(r->path, url, sizeof url, hdr, sizeof hdr)) { free(r); continue; }
     tFly++; if (hdr[0]) net_get_hdr(url, hdr, on_tm, r); else net_get(url, on_tm, r); }
 }

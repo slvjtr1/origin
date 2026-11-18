@@ -129,7 +129,7 @@ static void home_fit(Board *b) {
 static void on_catalog(ItemList *l, int cached, void *ud) {
   (void)cached; uintptr_t t = (uintptr_t)ud; Board *b = &boards[(t >> 31) & 1]; int row = t & 127; unsigned gen = (t >> 7) & 0xffffff;
   if ((b->gen & 0xffffff) != gen || row >= b->n) { itemlist_free(l); return; }
-  int got = l->n; if (b->kind == 1) year_keep(l); /* (Discover's decade) */
+  int got = l->consumed ? l->consumed : l->n; if (b->kind == 1) year_keep(l); /* (Discover's decade) */
   { Row *r0 = &b->rows[row]; if (!got && l->total < 0 && r0->hasDef && r0->retries < 3) { static const double W[3] = { 8, 20, 45 }; r0->retryAt = app_now() + W[r0->retries]; r0->retries++; itemlist_free(l); /* no answer (an addon still making the list, busy, a blip): asked again in 8, 20 and 45 s before the row is left out */
       fprintf(stderr, "[home] %s: no answer, asked again in %.0f s\n", r0->title, W[r0->retries - 1]); return; } }
   Row *r = &b->rows[row]; row_clear(r); r->items = *l; free(l); r->locAt = 0;
@@ -197,26 +197,26 @@ static void disc_grid(Board *b) {
 static void on_disc(ItemList *l, int cached, void *ud) {
   (void)cached; int mi; if (!dud_ok(ud, &mi)) { itemlist_free(l); return; }
   if (DS.nm == 1) { /* one catalog: its answer is the listing (its fresh answer replaces its kept one), as before */
-    itemlist_clear(&DS.all); itemlist_clear(&DS.part[0]); DS.used[0] = 0; DS.all = *l; free(l); DS.has[0] = 1; DS.mSkip[0] = DS.all.total > DS.all.n ? DS.all.total : DS.all.n; DS.mMore[0] = DS.m[0].skip && DS.all.n > 0; DS.more = DS.mMore[0]; DS.paging = 0;
+    itemlist_clear(&DS.all); itemlist_clear(&DS.part[0]); DS.used[0] = 0; DS.all = *l; free(l); DS.has[0] = 1; DS.mSkip[0] = DS.all.consumed ? DS.all.consumed : DS.all.n; DS.mMore[0] = DS.m[0].skip && DS.all.n > 0; DS.more = DS.mMore[0]; DS.paging = 0;
     Board *b = &boards[1]; disc_grid(b); if (cur() == b) hero_soon(b, 0); return; }
   if (DS.has[mi] && DS.used[mi]) { itemlist_free(l); return; } /* (several: a fresh answer after the kept one is used only if nothing of it shows yet) */
-  itemlist_clear(&DS.part[mi]); DS.part[mi] = *l; free(l); DS.has[mi] = 1; DS.mSkip[mi] = DS.part[mi].total > DS.part[mi].n ? DS.part[mi].total : DS.part[mi].n; DS.mMore[mi] = DS.m[mi].skip && DS.part[mi].n > 0;
+  itemlist_clear(&DS.part[mi]); DS.part[mi] = *l; free(l); DS.has[mi] = 1; DS.mSkip[mi] = DS.part[mi].consumed ? DS.part[mi].consumed : DS.part[mi].n; DS.mMore[mi] = DS.m[mi].skip && DS.part[mi].n > 0;
   disc_merge(); return;
 }
 static void on_disc_page(ItemList *l, int more, void *ud) {
   int mi; if (!dud_ok(ud, &mi)) { itemlist_free(l); return; } DS.mWait[mi] = 0;
   if (!l) { DS.mMore[mi] = 0; DS.pageAt = app_now() + 10; } /* (a page that failed: that member ends there) */
-  else { ItemList *p = &DS.part[mi]; int got = l->n; Item *g = realloc(p->items, (size_t)(p->n + l->n + 1) * sizeof(Item));
+  else { ItemList *p = &DS.part[mi]; int got = l->consumed ? l->consumed : l->n; Item *g = realloc(p->items, (size_t)(p->n + l->n + 1) * sizeof(Item));
     if (g) { p->items = g; memcpy(p->items + p->n, l->items, sizeof(Item) * (size_t)l->n); p->n += l->n; }
-    DS.mSkip[mi] += got; if (!got || !more) DS.mMore[mi] = 0; itemlist_free(l); }
+    DS.mSkip[mi] += got; if (!got || (!more && got >= l->total)) DS.mMore[mi] = 0; itemlist_free(l); }
   int w = 0; for (int i = 0; i < DS.nm; i++) w |= DS.mWait[i]; if (!w) DS.paging = 0;
   disc_merge();
 }
 static void on_disc_page1(ItemList *l, int more, void *ud) { /* one catalog: its next page at the listing's end, as before */
   int mi; if (!dud_ok(ud, &mi)) { itemlist_free(l); return; } DS.paging = 0; if (!l) { DS.pageAt = app_now() + 10; return; }
-  int got = l->n, add = 0; Item *g = realloc(DS.all.items, (size_t)(DS.all.n + l->n + 1) * sizeof(Item));
+  int got = l->consumed ? l->consumed : l->n, add = 0; Item *g = realloc(DS.all.items, (size_t)(DS.all.n + l->n + 1) * sizeof(Item));
   if (g) { DS.all.items = g; for (int i = 0; i < l->n; i++) { int dup = 0; for (int k = 0; k < DS.all.n && !dup; k++) dup = !strcmp(DS.all.items[k].id, l->items[i].id); if (!dup && l->items[i].id[0]) { DS.all.items[DS.all.n++] = l->items[i]; add++; } } }
-  itemlist_free(l); DS.mSkip[0] += got; if (!got || !add || !more || DS.all.n >= (MAXROWS - 2) * grid_n()) DS.more = 0;
+  if (got < l->total) more = 1; itemlist_free(l); DS.mSkip[0] += got; if (!got || !add || !more || DS.all.n >= (MAXROWS - 2) * grid_n()) DS.more = 0;
   disc_grid(&boards[1]);
 }
 /* the members' titles into the listing, in turn, each once: only as far as every member that still has titles (or
@@ -634,7 +634,7 @@ static void on_page(ItemList *l, int more, void *ud) {
   if ((b->gen & 0xffffff) != gen || row >= b->n) { itemlist_free(l); return; }
   Row *r = &b->rows[row]; if (!r->paging) { itemlist_free(l); return; } r->paging = 0; /* the row was filled again meanwhile */
   if (!l) { r->pageAt = app_now() + 10; return; }
-  int got = l->n; if (b->kind == 1) year_keep(l);
+  int got = l->consumed ? l->consumed : l->n; if (b->kind == 1) year_keep(l);
   int add = 0; Item *grow = realloc(r->items.items, (size_t)(r->items.n + l->n + 1) * sizeof(Item));
   if (grow) { r->items.items = grow;
     for (int i = 0; i < l->n; i++) { int dup = 0; for (int k = 0; k < r->items.n && !dup; k++) dup = !strcmp(r->items.items[k].id, l->items[i].id); if (!dup && l->items[i].id[0]) r->items.items[r->items.n++] = l->items[i], add++; } }

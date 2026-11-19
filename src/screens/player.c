@@ -57,6 +57,7 @@
 #include "ui/subfonts.h"
 #include "ui/asssubs.h"
 #include "ui/nerds.h"
+#include "screens/sleep.h"
 
 /* ---- the stream's text, read for the info chips: resolution, HDR, audio ---- */
 static void lower(const char *s, char *out, size_t cap) { size_t i = 0; for (; s[i] && i + 1 < cap; i++) out[i] = (char)tolower((unsigned char)s[i]); out[i] = 0; }
@@ -1277,6 +1278,7 @@ static void build_btns(void) {
   #define B(ID, IC, LB, BIG) do { if (i >= MAXBTN) break; P.btns[i].id = ID; P.btns[i].icon = IC; snprintf(P.btns[i].lb, 48, "%s", LB); P.btns[i].big = BIG; P.btns[i].nx = 0; i++; } while (0)
   if (!P.isTrailer && up_can()) { char ul[48]; up_label(ul, sizeof ul); B("up", "p_up", ul, 0); }
   { const char *am = !strcmp(P.aspect, "fill") ? "Fill the screen" : !strcmp(P.aspect, "zoom") ? "Zoom" : "Original"; B("asp", "p_asp", T(am), 0); }
+  if (!P.isTrailer) { char sl[48]; sleep_label(sl, sizeof sl); B("slp", "p_sleep", sl, 0); } /* the sleep timer */
   nl = i;
   if (!P.isTrailer && !live_title()) B("beg", "p_beg", "", 0); /* (a broadcast has no beginning) */
   if (!live_bcast()) B("rw", "p_rw", "", 0);
@@ -1536,7 +1538,8 @@ static int focusable(const TItem *it) { return it && it->k != 0 && it->k != 1; }
 static int first_on(const TItem *l, int n) { for (int i = 0; i < n; i++) if (l[i].on && focusable(&l[i])) return i; for (int i = 0; i < n; i++) if (focusable(&l[i])) return i; return -1; }
 static int season_of(const char *vid) { const char *c = strrchr(vid, ':'); if (!c) return 1; const char *p = c - 1; while (p > vid && *p != ':') p--; return *p == ':' ? atoi(p + 1) : 1; }
 static TItem *add_item(TItem *list, int *n, int max, int k) { if (*n >= max) return NULL; TItem *it = &list[(*n)++]; memset(it, 0, sizeof *it); it->k = k; return it; }
-static TItem *col_add(TCol *c, int k) { c->items = realloc(c->items, (c->n + 1) * sizeof *c->items); TItem *it = &c->items[c->n++]; memset(it, 0, sizeof *it); it->k = k; return it; }
+static TItem *col_add(TCol *c, int k) { static TItem spare; TItem *ni = realloc(c->items, (c->n + 1) * sizeof *c->items); if (!ni) { memset(&spare, 0, sizeof spare); return &spare; } /* (out of memory: filled and never shown) */
+  c->items = ni; TItem *it = &c->items[c->n++]; memset(it, 0, sizeof *it); it->k = k; return it; }
 static void cols_clear(void) { for (int i = 0; i < 4; i++) { free(P.tray.cols[i].items); P.tray.cols[i].items = NULL; P.tray.cols[i].n = 0; } P.tray.ncols = 0; }
 /* ---- the sources tray: tabs (All, then each addon serving the video, in the user's order, with how many it has),
    the stream playing and the best fit for this TV pinned on top of All, then every addon's streams under its name.
@@ -1554,11 +1557,11 @@ static const float C_GLIDE[4] = { .25f, 1, .5f, 1 }; /* GLIDE_EASE's curve, for 
 static struct {
   Mo tabX, tabW, tabF; int tabSeen; Mo swA; int swDir, swPend; Mo colBX, colBA; int colBSeen; int quiet;
   unsigned colSig[4], rowSig; Mo colA[4], rowA; int onIdx[4], rowOn; Mo chkA[4], rowChk; int vkC; char vkU[8]; Mo vkA;
-  Mo dot[6]; int dotSeen[6]; /* 0 the picture size, 1 subtitle size, 2 colour, 3 background, 4 subtitle position, 5 the upscale */
+  Mo dot[7]; int dotSeen[7]; /* 0 the picture size, 1 subtitle size, 2 colour, 3 background, 4 subtitle position, 5 the upscale, 6 the sleep timer */
   Mo swK[2]; int swFrom[2], swCur[2], swSeen[2]; /* the colour and background swatches: the one before, the one now, how far it has come */
 } TM;
 static void tm_tick(float dt) {
-  Mo *m[] = { &TM.tabX, &TM.tabW, &TM.tabF, &TM.swA, &TM.colBX, &TM.colBA, &TM.rowA, &TM.rowChk, &TM.vkA, &TM.dot[0], &TM.dot[1], &TM.dot[2], &TM.dot[3], &TM.dot[4], &TM.swK[0], &TM.swK[1] };
+  Mo *m[] = { &TM.tabX, &TM.tabW, &TM.tabF, &TM.swA, &TM.colBX, &TM.colBA, &TM.rowA, &TM.rowChk, &TM.vkA, &TM.dot[0], &TM.dot[1], &TM.dot[2], &TM.dot[3], &TM.dot[4], &TM.dot[6], &TM.swK[0], &TM.swK[1] };
   for (size_t i = 0; i < sizeof m / sizeof *m; i++) mo_tick(m[i], dt); for (int i = 0; i < 4; i++) { mo_tick(&TM.colA[i], dt); mo_tick(&TM.chkA[i], dt); }
 }
 static void tm_reset(void) { /* a tray opening: everything where it is, nothing gliding in from an old place */
@@ -1986,9 +1989,13 @@ static void pos_key(int k) {
   if (P.styK) { if (k == K_LEFT || k == K_RIGHT) style_change(app_mirror_key(k) == K_RIGHT ? 1 : -1); else if (k == K_OK) pos_close(); else if (k == K_UP || k == K_DOWN) nudge_start(&P.nudge, k); return; }
   if (k == K_UP) pos_change(1); else if (k == K_DOWN) pos_change(-1); else if (k == K_OK) pos_close(); else if (k == K_LEFT || k == K_RIGHT) nudge_start(&P.nudge, k); }
 static struct { float y, h, ux, uw, dx, dw, ox, ow; } PZ; /* the card's parts, for the pointer */
+/* the sleep timer's button: the next choice, its words on the button (and in the note above it) */
+static int sleep_with_end(void) { return !live_bcast() && !live_title(); } /* (a broadcast has no end to wait for) */
+static void sleep_label_now(void) { int b = btn_index("slp"); if (b < 0) return; char l[48]; sleep_label(l, sizeof l); if (strcmp(l, P.btns[b].lb)) { snprintf(P.btns[b].lb, 48, "%s", l); P.btns[b].lw = text_width(l, 22, 700, 0); } }
+static void sleep_btn(void) { sleep_cycle(sleep_with_end()); sleep_label_now(); }
 static void hub_from_player(void) { close_tray(); P.osd = 0; P.mode = 6; hub_open(1, P.id); } /* the live hub over the channel playing (mode 6) */
 static void act(const char *id) {
-  if (!strcmp(id, "pp")) toggle(); else if (!strcmp(id, "rw")) seek_by(-1); else if (!strcmp(id, "ff")) seek_by(1); else if (!strcmp(id, "beg")) from_start(); else if (!strcmp(id, "asp")) next_aspect(); else if (!strcmp(id, "up")) next_up(); else if (!strcmp(id, "nxt")) next_auto(); else if (!strcmp(id, "cc")) cc_toggle();
+  if (!strcmp(id, "pp")) toggle(); else if (!strcmp(id, "rw")) seek_by(-1); else if (!strcmp(id, "ff")) seek_by(1); else if (!strcmp(id, "beg")) from_start(); else if (!strcmp(id, "asp")) next_aspect(); else if (!strcmp(id, "up")) next_up(); else if (!strcmp(id, "nxt")) next_auto(); else if (!strcmp(id, "cc")) cc_toggle(); else if (!strcmp(id, "slp")) sleep_btn();
   else if (!strcmp(id, "chn")) { hub_from_player(); return; }
   else open_tray(!strcmp(id, "eps") ? 1 : !strcmp(id, "src") ? 2 : !strcmp(id, "aud") ? 3 : 4);
   arm_hide();
@@ -2014,6 +2021,7 @@ void player_key(int k, int down) {
   if (!P.open) return; if (shrinkAt > 0) return; /* (going back into its box) */ app_touch();
   if (P.pw.on && k != K_BACK) { if (k == K_OK) pw_end("Play now"); return; } /* (waiting for the previews: OK plays at once, Back closes, nothing else) */
   P.lastAct = now_(); if (P.ssOn) { ss_exit(); return; } /* the key that wakes the screensaver does nothing else */
+  { int was = sleep_asleep(); if (sleep_key(k)) { sound_play(SND_TOGGLE); sleep_label_now(); if (was) { if (P.ended) close_player(0, 0); else show_osd(1); } return; } } /* (the sleep timer's: the key that wakes the dark screen does nothing else) */
   if (P.clean && k != K_PLAY && k != K_PLAYPAUSE) { P.clean = 0; show_osd(1); return; } /* the clean frame: a key brings the controls back, and does only that (Play plays) */
   if (P.failed && AF.pick) { /* the three that failed, to choose from by hand */
     if (k == K_UP) { if (AF.sel > 0) AF.sel--; } else if (k == K_DOWN) { if (AF.sel < AF.n - 1) AF.sel++; }
@@ -2339,7 +2347,7 @@ void player_next_subs(const char *const *urls, const char *const *langs, int n) 
 void player_next_art(const char *name, const char *poster, const char *bg, const char *logo) {
   snprintf(artName, sizeof artName, "%s", name ? name : ""); snprintf(artPoster, sizeof artPoster, "%s", poster ? poster : ""); snprintf(artBg, sizeof artBg, "%s", bg ? bg : ""); snprintf(artLogo, sizeof artLogo, "%s", logo ? logo : ""); }
 void player_play_at(const Stream *s, const char *type, const char *id, const char *vid, double pos) { open_title(type, id); play_stream(s, vid, pos > 0 ? pos : 0); }
-static void finish_close(void) { if (hub_on() && hub_player_mode()) hub_close(); /* (one from Home stays: it is the page) */ { extern void detail_refresh_watched(void); detail_refresh_watched(); } /* the title page under it: its ticks as they are now */ sync_stop(0); gfx_target_free(&handSnap); mo_set(&handA, 0); if (!keepVideo) video_unload(); keepVideo = 0; /* (back into its preview: it plays on there) */ asssubs_close(); if (mkv) { prevspike_stop(); sp_close(); mkv_close(mkv); mkv = NULL; } p2p_player_closed(); p2pTok++; metaTok++; P.open = 0; P.closing = 0; if (P.meta) cJSON_Delete(P.meta); P.meta = NULL; subs_free(P.cues, P.ncues); free(P.ext); free(P.adx); srcs_free(); cols_clear(); memset(&P, 0, sizeof P); sub_reset(); free(extAss); extAss = NULL; app_refresh_boards(); }
+static void finish_close(void) { sleep_player_closed(); if (hub_on() && hub_player_mode()) hub_close(); /* (one from Home stays: it is the page) */ { extern void detail_refresh_watched(void); detail_refresh_watched(); } /* the title page under it: its ticks as they are now */ sync_stop(0); gfx_target_free(&handSnap); mo_set(&handA, 0); if (!keepVideo) video_unload(); keepVideo = 0; /* (back into its preview: it plays on there) */ asssubs_close(); if (mkv) { prevspike_stop(); sp_close(); mkv_close(mkv); mkv = NULL; } p2p_player_closed(); p2pTok++; metaTok++; P.open = 0; P.closing = 0; if (P.meta) cJSON_Delete(P.meta); P.meta = NULL; subs_free(P.cues, P.ncues); free(P.ext); free(P.adx); srcs_free(); cols_clear(); memset(&P, 0, sizeof P); sub_reset(); free(extAss); extAss = NULL; app_refresh_boards(); }
 static int closeNext, closeSim, closeArt; static double closeAt, closeT0; /* closeArt: closed on the loading screen (its line and words fade as the logo flies back) */
 static void close_player(int goNext, int goSim) {
   if (!P.open || P.closing) return; if (bestTok) { best_choose_cancel(bestTok); bestTok = 0; } P.closing = 1; ps_hold(0); sp_verify_reset(); np_stop(); NP.vid[0] = 0; /* (the next episode's pictures made so far: kept) */ /* (a lighter copy not taken yet: it reads on freely, nothing plays) */ closeArt = !P.live && P.artA.v > 0.999f; closeT0 = now_(); sx_begin_quick(0); /* the player's logo moves back to the page */ closeNext = goNext; closeSim = goSim; P.ssOn = 0; P.nx.tok = 0; P.sk.tok = 0;
@@ -2526,6 +2534,9 @@ void player_away(int behind) {
   if (!behind) { if (awayHold && P.open && !P.closing && paused()) show_osd(1); awayHold = 0; return; }
   if (!P.open || P.closing) return;
   awayHold = 1; if (!paused() && video_state() == VID_PLAYING) { video_pause(); save_progress(1); fprintf(stderr, "[player] behind another app: paused at %.0f s\n", video_time()); } }
+/* the sleep timer ran out: the film paused where it is (its place kept), the controls and lists away, nothing next */
+static void sleep_now(int vs) { if (P.mode == 2) close_tray(); if (P.osd) hide_osd(); P.endGoAt = 0; P.prompt.autoN = 0; P.clean = 0;
+  if (vs == VID_PLAYING || vs == VID_BUFFERING) video_pause(); save_progress(1); }
 void player_tick(float dt) {
   if (awayHold && (!P.open || P.closing)) awayHold = 0;
   if (awayHold && video_state() == VID_PLAYING) { extern int app_behind(void); if (app_behind()) { video_pause(); save_progress(1); fprintf(stderr, "[player] behind another app: held as it started\n"); } }
@@ -2627,11 +2638,13 @@ void player_tick(float dt) {
     if (vs == VID_PLAYING && at_credits() && !P.marked) { mark_watched(); save_progress(1); } /* the credits: watched, everywhere, at once */
     if (vs == VID_PLAYING && now_() - P.lastSave >= 10) save_progress(0);
     if (vs == VID_ENDED && !P.ended && live_reload("the stream ended")) vs = video_state();
-    if (vs == VID_ENDED && !P.ended) { P.ended = 1; scrobble_player_end(video_time(), dur(), 1); save_progress(1); mark_watched(); if (strcmp(store_get("bingeWatch", "true"), "false") && strcmp(store_get("enableNextVideo", "true"), "false") && P.next.has) P.endGoAt = now_() + 0.6; else close_player(0, 0); }
+    { int atEnd = !P.isTrailer && (at_credits() || P.prompt.k == 3 || vs == VID_ENDED); if (sleep_tick(atEnd)) sleep_now(vs); /* the sleep timer */
+      static double slAt; if (now_() - slAt >= 1) { slAt = now_(); sleep_label_now(); } }
+    if (vs == VID_ENDED && !P.ended) { P.ended = 1; scrobble_player_end(video_time(), dur(), 1); save_progress(1); mark_watched(); if (sleep_asleep()) P.endGoAt = 0; /* (asleep: nothing more plays) */ else if (strcmp(store_get("bingeWatch", "true"), "false") && strcmp(store_get("enableNextVideo", "true"), "false") && P.next.has) P.endGoAt = now_() + 0.6; else close_player(0, 0); }
     if (P.endGoAt && now_() >= P.endGoAt) { P.endGoAt = 0; go_next(); if (!P.open || P.closing) return; }
     check_prompt();
     if (P.prompt.autoN && (P.prompt.k == 1 || P.prompt.k == 2 || P.prompt.k == 4) && now_() - P.prompt.t0 >= P.prompt.adur && !paused()) prompt_go(0);
-    else if (P.prompt.autoN && P.prompt.k == 3 && now_() - P.prompt.t0 >= 10) { P.prompt.autoN = 0; next_auto(); }
+    else if (P.prompt.autoN && P.prompt.k == 3 && now_() - P.prompt.t0 >= 10 && !sleep_asleep()) { P.prompt.autoN = 0; next_auto(); }
     { static double lastT; double nw = now_(), step = lastT ? nw - lastT : 0; lastT = nw; /* the skip button's few seconds: they wait while paused or seeking */
       if (P.prompt.hideT0 && (paused() || P.seekT >= 0)) { P.prompt.hideT0 += step; P.shown.hideT0 = P.prompt.hideT0; }
       if (P.prompt.hideT0 && (P.prompt.k == 1 || P.prompt.k == 2 || P.prompt.k == 4) && !P.prompt.autoN && nw - P.prompt.hideT0 >= SKIP_SHOW_S) { fprintf(stderr, "[player] skip button not pressed: gone\n"); dismiss_prompt(); } }
@@ -3056,10 +3069,10 @@ static void draw_osd(void) {
     if (P.tipA.v > 0.001f && P.tip[0] && fi >= 0) { float ta = P.tipA.v * (P.tipAt && now_() - P.tipAt < .08 ? 0 : fminf(1, kf(P.tipAt, .3f, C_EASE, .08f)));
       /* the note above a button that cycles: its state in words, one dot per choice under them, the lit one gliding on each press */
       int up = !strcmp(P.btns[fi].id, "up"); float tw = text_width(P.tip, 22, 700, 0), w = fmaxf(tw, 90) + 56, h = 72, x = P.btns[P.nL > 0 ? P.nL - 1 : 0].x0 + P.btns[P.nL > 0 ? P.nL - 1 : 0].w + 18 - 10 * (1 - ta), y = P.btns[fi].y + P.btns[fi].w / 2 - h / 2; /* beside its group, clear of the bar */
-      int ai = up ? up_index() : !strcmp(P.aspect, "fill") ? 1 : !strcmp(P.aspect, "zoom") ? 2 : 0;
+      int sl = !strcmp(P.btns[fi].id, "slp"), ai = up ? up_index() : sl ? sleep_index() : !strcmp(P.aspect, "fill") ? 1 : !strcmp(P.aspect, "zoom") ? 2 : 0;
       gfx_opacity_push(ta); lglass_shell(x, y, w, h, 26, TINT(16, 16, 24, 150), 0.85f);
       text_draw(P.tip, x + w / 2, y + 12, 22, 700, WHITE_A(240), 0, 0, ALIGN_CENTER);
-      cycle_dots(up ? 4 : 0, up ? 4 : 3, ai, x + w / 2, y + h - 18, 11, 2.5f, WHITE_A(70), WHITE_A(240), 0); gfx_opacity_pop(); }
+      cycle_dots(up ? 4 : sl ? 6 : 0, up ? 4 : sl ? sleep_count(sleep_with_end()) : 3, ai, x + w / 2, y + h - 18, 11, 2.5f, WHITE_A(70), WHITE_A(240), 0); gfx_opacity_pop(); }
     for (int i = 0; i < P.nbtn; i++) { float sz = P.btns[i].w, x = P.btns[i].x, y = P.btns[i].y; int f = i == fi; const char *id = P.btns[i].id;
       if (!f) lglass_shell(x, y, sz, sz, sz / 2, TINT(16, 16, 24, 90), 0.85f); /* glass at rest */
       int seek = !strcmp(id, "rw") || !strcmp(id, "ff");
@@ -3344,6 +3357,7 @@ void player_draw(void) {
   else if (P.artA.v < 0.999f) hand_draw();
   draw_art();
   gfx_opacity_pop();
+  sleep_draw(); /* the sleep timer's countdown, its dark screen over everything */
 }
 static void chapters_hook(const char *url, int p2p) { (void)url; (void)p2p; P.chapWant = 1; }
 void player_init(void) { prev_available(); /* (the previews' decoder loading in the background from the start: the first film knows it is there) */ video_init(SB_APP_ID); app_play_hook = player_play; player_chapters_hook = chapters_hook; if (getenv("SB_PLAY_ALT")) player_fallback(getenv("SB_PLAY_ALT")); /* development: the fallback of the SB_PLAY stream */

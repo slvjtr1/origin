@@ -240,7 +240,7 @@ static void *fetch_run(void *arg) { Ctx *c = arg; nice_to(10);
 #endif
       } /* (a keyframe with no place in its Cluster: 1 MB of it, most such keyframes lie within) */
       if (nb < 2) { if (nb) { k = ks[0]; c->e[k].st = 0; } goto single; } /* (one alone, aimed or not: mkv_key_read does the same on its own) */ /* (only one to ask: the plain way) */
-      pthread_mutex_unlock(&c->mu); ensure_net(); unsigned char *parts[BATCH]; long plen[BATCH]; int hs = 0; double r0 = mono();
+      pthread_mutex_unlock(&c->mu); ensure_net(); unsigned char *parts[BATCH] = { 0 }; long plen[BATCH] = { 0 }; int hs = 0; /* (a dead stream asks nothing: none of them filled) */ double r0 = mono();
       int e = mkv_dead(c->m) ? NR_NET : net_range_multi(fnet, mkv_url(c->m), sts, lns, nb, parts, plen, &hs, 15000);
       int got = 0; long by = 0; for (int i = 0; i < nb; i++) if (parts[i]) by += plen[i];
       unsigned char *fr[BATCH]; long fl[BATCH]; int fr_r[BATCH];

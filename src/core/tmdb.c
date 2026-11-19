@@ -42,11 +42,11 @@ static int generic_ep(const char *s) {
 static int ep_cmp(const void *a, const void *b) { const TmdbEp *x = a, *y = b; return x->s != y->s ? x->s - y->s : x->e - y->e; }
 /* the helper's JSON ({name, overview, genres, logo, poster, eps: {"s:e": [name, overview]}, lt}) -> a result */
 static Loc *loc_from_json(const cJSON *v) {
-  Loc *l = calloc(1, sizeof *l);
+  Loc *l = calloc(1, sizeof *l); if (!l) return NULL;
   l->name = dupe(js_str(v, "name", "")); l->overview = dupe(js_str(v, "overview", "")); l->logo = dupe(js_str(v, "logo", "")); l->poster = dupe(js_str(v, "poster", ""));
   const cJSON *g; cJSON_ArrayForEach(g, js_arr(v, "genres")) if (cJSON_IsString(g) && l->pub.ngenres < 8) l->genres[l->pub.ngenres++] = dupe(g->valuestring);
   const cJSON *eps = js_obj(v, "eps"), *e; int n = cJSON_GetArraySize(eps), k = 0;
-  if (n > 0) l->eps = calloc((size_t)n, sizeof *l->eps);
+  if (n > 0) l->eps = calloc((size_t)n, sizeof *l->eps); if (!l->eps) eps = NULL; /* (no room: the names alone) */
   cJSON_ArrayForEach(e, eps) { int s, en; if (!e->string || sscanf(e->string, "%d:%d", &s, &en) != 2 || !cJSON_IsArray(e)) continue;
     const cJSON *a = cJSON_GetArrayItem(e, 0), *b = cJSON_GetArrayItem(e, 1); const char *nm = cJSON_IsString(a) ? a->valuestring : "", *ov = cJSON_IsString(b) ? b->valuestring : "";
     if (generic_ep(nm)) nm = "";
@@ -72,7 +72,7 @@ static int write_file(const char *p, const char *data, size_t len) {
 static char *read_file(const char *p, size_t *len) {
   FILE *f = fopen(p, "rb"); if (!f) return NULL; fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
   if (n < 0 || n > 8 * 1024 * 1024) { fclose(f); return NULL; }
-  char *b = malloc((size_t)n + 1); size_t g = fread(b, 1, (size_t)n, f); fclose(f); b[g] = 0; if (len) *len = g; return b;
+  char *b = malloc((size_t)n + 1); if (!b) { fclose(f); return NULL; } size_t g = fread(b, 1, (size_t)n, f); fclose(f); b[g] = 0; if (len) *len = g; return b;
 }
 static void url_enc(const char *s, char *out, size_t cap) { static const char *H = "0123456789ABCDEF"; size_t o = 0;
   for (; *s && o + 4 < cap; s++) { unsigned char c = (unsigned char)*s; if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') out[o++] = (char)c; else { out[o++] = '%'; out[o++] = H[c >> 4]; out[o++] = H[c & 15]; } }
@@ -174,7 +174,7 @@ static void prune(void) { /* keep the folder small: the oldest out past 800 titl
   DIR *d = opendir(locDir); if (!d) return;
   struct { char n[64]; time_t t; } *fl = NULL; int n = 0, cap = 0; struct dirent *e;
   while ((e = readdir(d))) { if (e->d_name[0] == '.' || strlen(e->d_name) >= 64) continue;
-    if (n == cap) { cap = cap ? cap * 2 : 256; fl = realloc(fl, (size_t)cap * sizeof *fl); }
+    if (n == cap) { int nc = cap ? cap * 2 : 256; void *nf = realloc(fl, (size_t)nc * sizeof *fl); if (!nf) break; fl = nf; cap = nc; }
     char p[1300]; struct stat st; snprintf(p, sizeof p, "%s/%s", locDir, e->d_name); snprintf(fl[n].n, 64, "%s", e->d_name); fl[n].t = stat(p, &st) ? 0 : st.st_mtime; n++; }
   closedir(d);
   if (n > 800) for (int k = 0; k < 200; k++) { int o = -1; for (int i = 0; i < n; i++) if (fl[i].n[0] && (o < 0 || fl[i].t < fl[o].t)) o = i;
@@ -237,6 +237,7 @@ static void evict(void) {
 }
 static void install(Job *j) {
   Ent *e = find(j->id, 1); if (!e) { loc_free(j->v); return; }
+  if (!j->err && !j->none && !j->v) j->err = 1; /* (no memory for what came: as a failed lookup, asked again later) */
   if (j->err) { /* asked again in 5 min; a row's result already in stays */
     e->retryAt = app_now() + ERR_SEC; e->state = e->v ? S_READY : S_ERR; if (!j->light) e->fullAsked = 0; return; }
   if (j->none) { if (!e->v) e->state = S_READY; e->fullAsked = 0; if (!e->v) e->light = 0; return; } /* TMDB does not know it: the English stays */

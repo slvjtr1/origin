@@ -63,7 +63,7 @@ static void iso_now(char out[32]) {
 static void rotate(void) {
   FILE *f = fopen(filePath, "rb"); if (!f) return;
   fseek(f, 0, SEEK_END); long n = ftell(f); long from = n - APPLOG_MAX / 2; if (from < 0) from = 0;
-  char *b = malloc((size_t)(n - from) + 1); fseek(f, from, SEEK_SET); size_t g = fread(b, 1, (size_t)(n - from), f); fclose(f);
+  if (n < 0) { fclose(f); return; } char *b = malloc((size_t)(n - from) + 1); if (!b) { fclose(f); return; } fseek(f, from, SEEK_SET); size_t g = fread(b, 1, (size_t)(n - from), f); fclose(f);
   size_t k = 0; if (from > 0) { while (k < g && b[k] != '\n') k++; if (k < g) k++; } /* from the next whole line */
   char tmp[1200]; snprintf(tmp, sizeof tmp, "%s.tmp", filePath);
   FILE *o = fopen(tmp, "wb"); if (o) { fwrite(b + k, 1, g - k, o); fclose(o); rename(tmp, filePath); }
@@ -215,7 +215,7 @@ void applog_start(const char *dataDir) {
 /* ---- the bundle ---- */
 __attribute__((weak)) const char *plat_log_header(void) { return ""; } /* (a platform with more to say about itself gives it) */
 typedef struct { char *p; size_t n, cap; } Buf;
-static void b_add(Buf *b, const char *s) { size_t l = strlen(s); if (b->n + l + 1 > b->cap) { b->cap = (b->n + l + 1) * 2 + 256; b->p = realloc(b->p, b->cap); } memcpy(b->p + b->n, s, l + 1); b->n += l; }
+static void b_add(Buf *b, const char *s) { size_t l = strlen(s); if (b->n + l + 1 > b->cap) { size_t nc = (b->n + l + 1) * 2 + 256; char *np = realloc(b->p, nc); if (!np) return; b->p = np; b->cap = nc; } memcpy(b->p + b->n, s, l + 1); b->n += l; }
 static char *read_file(const char *p, size_t max) { FILE *f = fopen(p, "rb"); if (!f) return NULL; char *b = malloc(max + 1); size_t n = fread(b, 1, max, f); b[n] = 0; fclose(f); return b; }
 static void json_str(const char *j, const char *key, char *out, size_t cap) { /* a flat "key": "value" from a small system file */
   out[0] = 0; char k[64]; snprintf(k, sizeof k, "\"%s\"", key); const char *p = j ? strstr(j, k) : NULL; if (!p) return;

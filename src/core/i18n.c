@@ -22,7 +22,7 @@ static const char *codes[] = { "en" }; /* English only for now */
 #define NLANG ((int)(sizeof codes / sizeof codes[0]))
 static const char *names[] = { "English" };
 
-static char *read_all(const char *p) { FILE *f = fopen(p, "rb"); if (!f) return NULL; fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET); char *b = malloc(n + 1); size_t g = fread(b, 1, n, f); b[g] = 0; fclose(f); return b; }
+static char *read_all(const char *p) { FILE *f = fopen(p, "rb"); if (!f) return NULL; fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET); char *b = n >= 0 ? malloc((size_t)n + 1) : NULL; if (!b) { fclose(f); return NULL; } size_t g = fread(b, 1, n, f); b[g] = 0; fclose(f); return b; }
 static int known(const char *c) { for (int i = 0; i < NLANG; i++) if (!strcmp(codes[i], c)) return 1; return 0; }
 /* the TV's own language, two letters: its settings service (asked once, the answer kept for the next start),
    else the last answer it gave, else the environment */

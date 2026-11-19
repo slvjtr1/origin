@@ -14,7 +14,7 @@
 
 typedef struct { char *p; size_t n, cap; } Buf;
 static void b_put(Buf *b, const char *s, size_t n) {
-  if (b->n + n + 1 > b->cap) { b->cap = (b->n + n + 1) * 2 + 64; b->p = realloc(b->p, b->cap); }
+  if (b->n + n + 1 > b->cap) { size_t nc = (b->n + n + 1) * 2 + 64; char *np = realloc(b->p, nc); if (!np) return; b->p = np; b->cap = nc; }
   memcpy(b->p + b->n, s, n); b->n += n; b->p[b->n] = 0;
 }
 static void b_str(Buf *b, const char *s) { b_put(b, s, strlen(s)); }

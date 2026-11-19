@@ -17,7 +17,7 @@ static int dirty; static Uint32 dirtyAt;
 static char *read_all(const char *p, size_t *len) {
   FILE *f = fopen(p, "rb"); if (!f) return NULL;
   fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
-  char *b = malloc(n + 1); size_t got = fread(b, 1, n, f); fclose(f); b[got] = 0; if (len) *len = got; return b;
+  char *b = n >= 0 ? malloc((size_t)n + 1) : NULL; if (!b) { fclose(f); return NULL; } size_t got = fread(b, 1, (size_t)n, f); fclose(f); b[got] = 0; if (len) *len = got; return b;
 }
 static int write_all(const char *p, const void *data, size_t len) {
   static unsigned seq; char tmp[1240]; snprintf(tmp, sizeof tmp, "%s.%u.tmp", p, __sync_add_and_fetch(&seq, 1)); /* the writer thread and the exit flush never share one */
@@ -118,9 +118,9 @@ long cache_cap_bytes(void) { return capBytes; }
 long cache_kept_bytes(void) { return __atomic_load_n(&keptBytes, __ATOMIC_RELAXED); }
 static void *prune_run(void *a) { (void)a; plat_thread_background(15);
   char d[1100]; snprintf(d, sizeof d, "%s/cache", dir); DIR *dd = opendir(d); if (!dd) return NULL;
-  int n = 0, cap = 4096; CEnt *e = malloc(cap * sizeof *e); long total = 0; struct dirent *de;
+  int n = 0, cap = 4096; CEnt *e = malloc(cap * sizeof *e); long total = 0; struct dirent *de; if (!e) { closedir(dd); return NULL; }
   while ((de = readdir(dd))) { if (de->d_name[0] == '.' || strlen(de->d_name) >= sizeof e[0].name) continue; char p[1200]; snprintf(p, sizeof p, "%s/%s", d, de->d_name); struct stat st; if (stat(p, &st) || !S_ISREG(st.st_mode)) continue;
-    if (n == cap) { cap *= 2; e = realloc(e, cap * sizeof *e); } snprintf(e[n].name, sizeof e[n].name, "%s", de->d_name); e[n].at = st.st_atime > st.st_mtime ? st.st_atime : st.st_mtime; e[n].size = st.st_size; total += st.st_size; n++; }
+    if (n == cap) { CEnt *ne = realloc(e, cap * 2 * sizeof *e); if (!ne) break; e = ne; cap *= 2; } snprintf(e[n].name, sizeof e[n].name, "%s", de->d_name); e[n].at = st.st_atime > st.st_mtime ? st.st_atime : st.st_mtime; e[n].size = st.st_size; total += st.st_size; n++; }
   closedir(dd);
   { /* the cap, as the reference app keeps it: 15% of what the cache could take (the space free and its own), 32 MB at
        least (a nearly full TV still keeps Home's pictures), never more than asked; the disk never left under 16 MB */

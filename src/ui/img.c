@@ -128,12 +128,12 @@ static Img *find(const char *url, unsigned h) { for (Img *i = table[h % BUCKETS]
 /* the picture as it is drawn is kept too, re-encoded small (a poster at its card size is ~15 KB of JPEG, logos a
    small PNG for their transparency): the next visit decodes that in a few ms instead of the full-size original */
 typedef struct { unsigned char *b; size_t n, cap; } WBuf;
-static void wbuf_put(void *ctx, void *data, int size) { WBuf *w = ctx; if (w->n + size > w->cap) { w->cap = (w->n + size) * 2; w->b = realloc(w->b, w->cap); } memcpy(w->b + w->n, data, size); w->n += size; }
+static void wbuf_put(void *ctx, void *data, int size) { WBuf *w = ctx; if (!w->b && w->cap) return; if (w->n + size > w->cap) { size_t nc = (w->n + size) * 2; unsigned char *nb = realloc(w->b, nc); if (!nb) { free(w->b); w->b = NULL; w->n = 0; w->cap = 1; return; } w->b = nb; w->cap = nc; } memcpy(w->b + w->n, data, size); w->n += size; }
 static void small_save(const Img *im, const unsigned char *px, int w, int h) {
   if (!strncmp(im->src, "file://", 7) || w * h > 1280 * 720) return;
   int opaque = 1; for (long i = 3, n = (long)w * h * 4; i < n; i += 4) if (px[i] != 255) { opaque = 0; break; }
   WBuf b = { 0 }; int ok;
-  if (opaque) { unsigned char *rgb = malloc((size_t)w * h * 3); for (long i = 0, n = (long)w * h; i < n; i++) { rgb[i * 3] = px[i * 4]; rgb[i * 3 + 1] = px[i * 4 + 1]; rgb[i * 3 + 2] = px[i * 4 + 2]; }
+  if (opaque) { unsigned char *rgb = malloc((size_t)w * h * 3); if (!rgb) return; for (long i = 0, n = (long)w * h; i < n; i++) { rgb[i * 3] = px[i * 4]; rgb[i * 3 + 1] = px[i * 4 + 1]; rgb[i * 3 + 2] = px[i * 4 + 2]; }
     ok = stbi_write_jpg_to_func(wbuf_put, &b, w, h, 3, rgb, 90); free(rgb); }
   else ok = stbi_write_png_to_func(wbuf_put, &b, w, h, 4, px, w * 4);
   if (ok && b.n) { char key[2400]; snprintf(key, sizeof key, "sm:%dx%d:%s", im->w, im->h, im->url); cache_write(key, b.b, b.n); }

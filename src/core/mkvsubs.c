@@ -294,12 +294,12 @@ static int each_cues(void *c_, unsigned id, long d, long long sz, long at) { Cue
   double scale = q->c.info->tscale / 1e9;
   for (int j = 0; j < q->np; j++) {
     if (q->p[j].cl >= 0) { /* every Cluster's time, for scan mode */
-      if (!q->ncls || q->cls[q->ncls - 1].cl != q->c.info->segStart + q->p[j].cl) { if (q->ncls == q->capc) { q->capc = q->capc ? q->capc * 2 : 1024; q->cls = realloc(q->cls, q->capc * sizeof *q->cls); } q->cls[q->ncls].cl = q->c.info->segStart + q->p[j].cl; q->cls[q->ncls].t = q->time * scale; q->ncls++; } }
+      if (!q->ncls || q->cls[q->ncls - 1].cl != q->c.info->segStart + q->p[j].cl) { if (q->ncls == q->capc) { int nc = q->capc ? q->capc * 2 : 1024; ClusterT *np = realloc(q->cls, nc * sizeof *np); if (np) { q->cls = np; q->capc = nc; } } if (q->ncls < q->capc) { q->cls[q->ncls].cl = q->c.info->segStart + q->p[j].cl; q->cls[q->ncls].t = q->time * scale; q->ncls++; } } }
     if (q->vtrk > 0 && q->p[j].trk == q->vtrk && q->p[j].cl >= 0) { /* the video's keyframes, kept apart (seeks land on one) */
       if (q->nvk == q->vcap) { int nc = q->vcap ? q->vcap * 2 : 1024; Point *np = realloc(q->vk, nc * sizeof *np); if (np) { q->vk = np; q->vcap = nc; } }
       if (q->nvk < q->vcap) { Point *v = &q->vk[q->nvk++]; v->t = q->time * scale; v->d = -1; v->cl = q->c.info->segStart + q->p[j].cl; v->rel = q->p[j].rel; v->num = q->vtrk; } }
     if (q->p[j].trk <= 0 || q->p[j].trk > 255 || !q->want[q->p[j].trk] || q->p[j].cl < 0) continue;
-    if (q->npts == q->cap) { q->cap = q->cap ? q->cap * 2 : 1024; q->pts = realloc(q->pts, q->cap * sizeof *q->pts); }
+    if (q->npts == q->cap) { int nc = q->cap ? q->cap * 2 : 1024; Point *np = realloc(q->pts, nc * sizeof *np); if (!np) continue; q->pts = np; q->cap = nc; }
     Point *p = &q->pts[q->npts++]; p->t = q->time * scale; p->d = q->p[j].dur >= 0 ? q->p[j].dur * scale : -1; p->cl = q->c.info->segStart + q->p[j].cl; p->rel = q->p[j].rel; p->num = q->p[j].trk;
   }
   return 0; }
@@ -480,9 +480,14 @@ static double now_pos(MkvSession *s) { if (!s->moving) return s->pos; double el 
 static TState *ts_of(MkvSession *s, int num) { for (int i = 0; i < s->nts; i++) if (s->ts[i].tr->num == num) return &s->ts[i]; return NULL; }
 static TState *ts_by_n(MkvSession *s, int n) { for (int i = 0; i < s->nts; i++) if (s->ts[i].tr->n == n) return &s->ts[i]; return NULL; }
 /* lines are kept sorted by start (the player looks them up by time) */
-static void raw_fit(TState *t) { if (t->rawOn) { t->raw = realloc(t->raw, (t->cap ? t->cap : 1) * sizeof *t->raw); t->rser = realloc(t->rser, (t->cap ? t->cap : 1) * sizeof *t->rser); } }
+/* an array grown to cap entries (when it cannot be, it stays as it was and 0) */
+static int grow(void **p, size_t each, int cap) { void *np = realloc(*p, (size_t)(cap ? cap : 1) * each); if (!np) return 0; *p = np; return 1; }
+static void raw_fit(TState *t) { if (t->rawOn && (!grow((void **)&t->raw, sizeof *t->raw, t->cap) || !grow((void **)&t->rser, sizeof *t->rser, t->cap))) { free(t->raw); free(t->rser); t->raw = NULL; t->rser = NULL; t->rawOn = 0; } } /* (no room for the styled copies: plain lines) */
 static void ts_add(TState *t, Line *ln, int pidx, long long skey, char *raw) {
-  if (t->n == t->cap) { t->cap = t->cap ? t->cap * 2 : 256; t->l = realloc(t->l, t->cap * sizeof *t->l); t->pidx = realloc(t->pidx, t->cap * sizeof *t->pidx); t->skey = realloc(t->skey, t->cap * sizeof *t->skey); raw_fit(t); }
+  if (t->n == t->cap) { int nc = t->cap ? t->cap * 2 : 256;
+    if (!grow((void **)&t->l, sizeof *t->l, nc) || !grow((void **)&t->pidx, sizeof *t->pidx, nc) || !grow((void **)&t->skey, sizeof *t->skey, nc)
+        || (t->rawOn && (!grow((void **)&t->raw, sizeof *t->raw, nc) || !grow((void **)&t->rser, sizeof *t->rser, nc)))) { free(raw); return; } /* (out of memory: this line dropped, never a crash) */
+    t->cap = nc; }
   int a = 0, z = t->n; while (a < z) { int m = (a + z) / 2; if (t->l[m].s <= ln->s) a = m + 1; else z = m; }
   memmove(t->l + a + 1, t->l + a, (t->n - a) * sizeof *t->l); memmove(t->pidx + a + 1, t->pidx + a, (t->n - a) * sizeof *t->pidx); memmove(t->skey + a + 1, t->skey + a, (t->n - a) * sizeof *t->skey);
   t->l[a] = *ln; t->pidx[a] = pidx; t->skey[a] = skey;
@@ -530,7 +535,7 @@ static void add_line(MkvSession *s, int i, const Block *blk) {
 }
 /* drops lines far from the playhead: their index points become pending again, scan keys are forgotten */
 static int seen_has(MkvSession *s, long long k) { for (int i = 0; i < s->nseen; i++) if (s->seen[i] == k) return 1; return 0; }
-static void seen_add(MkvSession *s, long long k) { if (s->nseen == s->capseen) { s->capseen = s->capseen ? s->capseen * 2 : 1024; s->seen = realloc(s->seen, s->capseen * sizeof *s->seen); } s->seen[s->nseen++] = k; }
+static void seen_add(MkvSession *s, long long k) { if (s->nseen == s->capseen) { int nc = s->capseen ? s->capseen * 2 : 1024; long long *np = realloc(s->seen, nc * sizeof *np); if (!np) return; s->seen = np; s->capseen = nc; } s->seen[s->nseen++] = k; }
 static void prune(MkvSession *s) {
   s->prunedAt = mono(); double now = now_pos(s); s->nseen = 0;
   for (int k = 0; k < s->nts; k++) {
@@ -634,7 +639,7 @@ static int find_cluster_in(cu8 *b, long n) { /* a plausible Cluster start: ID, a
   return -1;
 }
 static int scanned_has(MkvSession *s, long long cl) { for (int i = 0; i < s->nscanned; i++) if (s->scanned[i].cl == cl) return 1; return 0; }
-static void scanned_add(MkvSession *s, long long cl, double t) { if (scanned_has(s, cl)) return; if (s->nscanned == s->capscanned) { s->capscanned = s->capscanned ? s->capscanned * 2 : 512; s->scanned = realloc(s->scanned, s->capscanned * sizeof *s->scanned); } s->scanned[s->nscanned].cl = cl; s->scanned[s->nscanned].t = t; s->nscanned++; }
+static void scanned_add(MkvSession *s, long long cl, double t) { if (scanned_has(s, cl)) return; if (s->nscanned == s->capscanned) { int nc = s->capscanned ? s->capscanned * 2 : 512; void *np = realloc(s->scanned, nc * sizeof *s->scanned); if (!np) return; s->scanned = np; s->capscanned = nc; } s->scanned[s->nscanned].cl = cl; s->scanned[s->nscanned].t = t; s->nscanned++; }
 static int block_track(cu8 *b, long n, long o, unsigned id, int il, int sl) {
   long d = o + il + sl;
   if (id == ID_BLOCKGROUP) { unsigned c; int cl = read_id(b, n, d, &c); long long cs; int csl = cl ? read_size(b, n, d + cl, &cs) : 0; if (!cl || c != ID_BLOCK || !csl) return -1; d += cl + csl; }

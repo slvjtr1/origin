@@ -101,7 +101,7 @@ typedef struct { int def, px, rot; AtlasSlot slot; GLuint own; unsigned use; } C
 static Cached cache[192]; static int ncache; static unsigned useTick;
 static void icon_load(const char *path) {
   FILE *f = fopen(path, "rb"); if (!f) return;
-  fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET); char *t = malloc(n + 1); size_t g = fread(t, 1, n, f); t[g] = 0; fclose(f);
+  fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET); char *t = n >= 0 ? malloc((size_t)n + 1) : NULL; if (!t) { fclose(f); return; } size_t g = fread(t, 1, (size_t)n, f); t[g] = 0; fclose(f);
   cJSON *j = cJSON_Parse(t); free(t); if (!j) { fprintf(stderr, "[icon] bad %s\n", path); return; }
   cJSON *e; cJSON_ArrayForEach(e, j) { if (!cJSON_IsString(e) || icon_exists(e->string)) continue;
     if (ndefs >= MAXDEFS) { fprintf(stderr, "[icon] too many icons: %s from %s left out\n", e->string, path); continue; }

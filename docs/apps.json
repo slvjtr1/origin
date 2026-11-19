@@ -16,21 +16,21 @@
       "fullDescriptionUrl": "api/apps/tv.stremioorigin.app/full_description.html",
       "manifest": {
         "id": "tv.stremioorigin.app",
-        "version": "1.5.3",
+        "version": "1.6.0",
         "type": "native",
         "title": "Origin",
         "appDescription": "Your own Stremio account and addons on your LG TV: artwork and full-screen trailers, the best stream in one press, Live TV, Trakt, styled subtitles, clean search. Unofficial.",
         "iconUri": "https://slvjtr1.github.io/origin/icon.png",
         "sourceUrl": "https://github.com/slvjtr1/origin",
         "rootRequired": false,
-        "ipkUrl": "https://github.com/slvjtr1/origin/releases/download/v1.5.3/tv.stremioorigin.app_1.5.3_arm.ipk",
+        "ipkUrl": "https://github.com/slvjtr1/origin/releases/download/v1.6.0/tv.stremioorigin.app_1.6.0_arm.ipk",
         "ipkHash": {
-          "sha256": "fa328d2992c7d9306fd8109cb3519f252d44b9892f8a78e2fbe63c3ca527639e"
+          "sha256": "7403e690fb40fdfb5caab23a6c2d672c4456acfbf25ab3aac125609f3ca60473"
         },
         "notes": [
-          "Resume at a glance: The Play button says what it plays and how much is left, with a ring showing how far you got.",
-          "Source health: A coloured mark on each stream: smooth, may buffer or slow. Turn it on in Settings > Playback.",
-          "Playback info: Press the blue key while a film plays: the source, the file, its bitrate and a live graph of the buffer."
+          "Sleep timer: The moon button in the player: 15 to 90 minutes or the episode’s end. The film then pauses, your place kept, and the screen goes dark.",
+          "Steadier on a busy TV: When the TV runs short of memory, subtitles, previews and pictures now make do instead of closing the app.",
+          "Seek previews: A stream that drops while its previews are being made no longer closes the app."
         ]
       }
     }

@@ -5,6 +5,7 @@
    drawn once with its shading baked in: per frame it is two picture quads and a few words. Every 40 s the clock moves
    to another free corner, and every other time the title trades sides (bottom right, sometimes bottom left), so nothing
    stays on the same pixels of the panel. */
+#include "screens/sleep.h"
 #include "screens/saver.h"
 #include "screens/player.h"
 #include "core/app.h"
@@ -140,7 +141,7 @@ void saver_tick(float dt) {
     if (SS.freeAt && now >= SS.freeAt) { SS.freeAt = 0; for (int i = 0; i < 2; i++) { gfx_target_free(&SS.L[i].t); SS.L[i].ok = 0; } } /* the pictures give their memory back */
     if (now < SS.checkAt) return; SS.checkAt = now + 10;
     double m = atof(store_get("ssDelay", "5"));
-    if (m <= 0 || (player_open() && !player_paused()) || app_idle() < m * 60 || dimOn) return;
+    if (m <= 0 || (player_open() && !player_paused()) || app_idle() < m * 60 || dimOn || sleep_asleep()) return; /* (the sleep timer's dark screen: no screensaver over it) */
     if (!app_splash_done || SCR == SCR_LOGIN) { dimOn = 1; tween_to(&dimA, 1, 1.6f, EASE_CSS_EASE); fprintf(stderr, "[screensaver] dimmed\n"); return; } /* everywhere but the sign-in (and over a paused film) */
     start(); return; }
   if (player_open() && !player_paused()) { saver_stop(); return; } /* (a film playing again ends it) */

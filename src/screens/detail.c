@@ -102,7 +102,7 @@ static void build_seasons(void) {
   const cJSON *videos = js_arr(D.meta, "videos"); const cJSON *v;
   cJSON_ArrayForEach(v, videos) { int sn = (int)js_num(v, "season", 0); int k = -1; for (int i = 0; i < D.nseasons; i++) if (D.seasons[i].n == sn) { k = i; break; }
     if (k < 0) { if (D.nseasons >= MAXSEASON) continue; k = D.nseasons++; D.seasons[k].n = sn; D.seasons[k].eps = NULL; D.seasons[k].neps = 0; }
-    Season *s = &D.seasons[k]; s->eps = realloc(s->eps, (s->neps + 1) * sizeof *s->eps); s->eps[s->neps++] = v; }
+    Season *s = &D.seasons[k]; void *ne = realloc(s->eps, (s->neps + 1) * sizeof *s->eps); if (!ne) continue; s->eps = ne; s->eps[s->neps++] = v; }
   /* seasons in order, specials (0) last */
   for (int i = 1; i < D.nseasons; i++) for (int j = i; j > 0; j--) { int a = D.seasons[j - 1].n, b = D.seasons[j].n; if ((a == 0 && b != 0) || (a != 0 && b != 0 && a > b)) { Season t = D.seasons[j]; D.seasons[j] = D.seasons[j - 1]; D.seasons[j - 1] = t; } else break; }
   for (int i = 0; i < D.nseasons; i++) qsort(D.seasons[i].eps, D.seasons[i].neps, sizeof *D.seasons[i].eps, cmp_ep);

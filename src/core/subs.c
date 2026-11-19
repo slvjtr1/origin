@@ -125,10 +125,10 @@ static char *body_text(const unsigned char *body, size_t len, const char *lang) 
   unsigned char *buf = NULL; size_t n = 0;
   if (len >= 2 && body[0] == 0x1f && body[1] == 0x8b) {
     z_stream z; memset(&z, 0, sizeof z); if (inflateInit2(&z, 16 + MAX_WBITS) != Z_OK) return NULL;
-    size_t cap = len * 4 + 4096; buf = malloc(cap); int rc = Z_OK;
+    size_t cap = len * 4 + 4096; buf = malloc(cap); int rc = Z_OK; if (!buf) { inflateEnd(&z); return NULL; }
     z.next_in = (unsigned char *)body; z.avail_in = (uInt)len;
     while (rc == Z_OK) {
-      if (cap - n < 4096) { if (cap >= 16u << 20) break; cap *= 2; buf = realloc(buf, cap); }
+      if (cap - n < 4096) { if (cap >= 16u << 20) break; unsigned char *nb = realloc(buf, cap * 2); if (!nb) break; buf = nb; cap *= 2; }
       z.next_out = buf + n; z.avail_out = (uInt)(cap - n - 1); rc = inflate(&z, Z_NO_FLUSH); n = cap - 1 - z.avail_out;
     }
     inflateEnd(&z); if (rc != Z_STREAM_END && !n) { free(buf); return NULL; }
@@ -348,7 +348,7 @@ static void find_deliver(FindQ *f) {
 static void find_add(FindQ *f, const SubEntry *e, int n) {
   for (int i = 0; i < n; i++) { int dup = 0; for (int k = 0; k < f->n && !dup; k++) dup = !strcmp(f->all[k].url, e[i].url); if (dup) continue;
     if (e[i].from != SUB_FALLBACK && !subs_wanted(e[i].lang)) continue; /* only the chosen languages (OpenSubtitles' list is filtered as it comes) */
-    if (f->n == f->cap) { f->cap = f->cap ? f->cap * 2 : 64; f->all = realloc(f->all, f->cap * sizeof *f->all); }
+    if (f->n == f->cap) { int nc = f->cap ? f->cap * 2 : 64; SubEntry *na = realloc(f->all, nc * sizeof *na); if (!na) break; f->all = na; f->cap = nc; }
     f->all[f->n] = e[i]; entry_name(&f->all[f->n]); f->n++; }
   qsort(f->all, f->n, sizeof *f->all, cmp_entry);
 }

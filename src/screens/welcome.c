@@ -1026,7 +1026,7 @@ int welcome_covers(void) { return W.open && !W.closing && !W.in.on && app_overla
 static int guide_titles(Item *out, int max) {
   char p[1200]; snprintf(p, sizeof p, "%s/guide/titles.json", plat_asset_dir());
   FILE *f = fopen(p, "rb"); if (!f) return 0; fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
-  char *b = malloc((size_t)n + 1); size_t got = fread(b, 1, (size_t)n, f); b[got] = 0; fclose(f);
+  char *b = n >= 0 ? malloc((size_t)n + 1) : NULL; if (!b) { fclose(f); return 0; } size_t got = fread(b, 1, (size_t)n, f); b[got] = 0; fclose(f);
   cJSON *j = cJSON_Parse(b); free(b); int k = 0; const cJSON *m;
   cJSON_ArrayForEach(m, j) { if (k >= max) break; Item *it = &out[k]; sb_fill_item(it, m, "movie"); const char *d = plat_asset_dir();
     snprintf(it->poster, sizeof it->poster, "file://%s/guide/%s.poster.webp", d, it->id); snprintf(it->background, sizeof it->background, "file://%s/guide/%s.bg.webp", d, it->id);
@@ -1049,7 +1049,7 @@ static int load(void) {
   char p[1200]; snprintf(p, sizeof p, "%s/whatsnew.json", plat_asset_dir());
   W.nnews = 0; W.url[0] = 0; W.smsg[0] = 0; W.note[0] = 0; snprintf(W.ver, sizeof W.ver, "%s", update_current());
   FILE *f = fopen(p, "rb"); if (!f) return 0; fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
-  char *b = malloc((size_t)n + 1); size_t got = fread(b, 1, (size_t)n, f); b[got] = 0; fclose(f);
+  char *b = n >= 0 ? malloc((size_t)n + 1) : NULL; if (!b) { fclose(f); return 0; } size_t got = fread(b, 1, (size_t)n, f); b[got] = 0; fclose(f);
   cJSON *j = cJSON_Parse(b); free(b); if (!j) return 0;
   snprintf(W.ver, sizeof W.ver, "%s", js_str(j, "version", update_current()));
   const cJSON *it; cJSON_ArrayForEach(it, js_arr(j, "items")) { if (W.nnews >= MAXN) break; News *nw = &W.news[W.nnews]; memset(nw, 0, sizeof *nw);

@@ -335,7 +335,7 @@ typedef struct { Font *font; unsigned gid; float x, y; short gpx; unsigned char 
 typedef struct { float x, y, w, h; } Box;   /* a flag's tag outline: x from the line start, y from the baseline (surface px) */
 typedef struct { Glyph *g; int n, cap; float width; int cutAt; Box *box; int nbox; } Shaped;
 static void glyph_push(Shaped *s, Font *f, unsigned gid, float x, float y, int bold) {
-  if (s->n == s->cap) { s->cap = s->cap ? s->cap * 2 : 64; s->g = realloc(s->g, s->cap * sizeof *s->g); }
+  if (s->n == s->cap) { int nc = s->cap ? s->cap * 2 : 64; Glyph *ng = realloc(s->g, nc * sizeof *ng); if (!ng) return; s->g = ng; s->cap = nc; }
   Glyph *g = &s->g[s->n++]; g->font = f; g->gid = gid; g->x = x; g->y = y; g->gpx = 0; g->bold = (unsigned char)bold;
 }
 static void shaped_free(Shaped *s) { free(s->g); free(s->box); }
@@ -372,7 +372,7 @@ static float shape_tag(Shaped *out, const uint32_t *cps, int a, int b, int px, f
   int g0 = out->n;
   float tw = shape_run(out, f, l, 0, k, 0, tpx, tpx * 0.04f, pen + gap + pad, 0, 0) - tpx * 0.04f;
   for (int i = g0; i < out->n; i++) { out->g[i].gpx = (short)tpx; out->g[i].y = mid + capH / 2; }
-  out->box = realloc(out->box, (out->nbox + 1) * sizeof *out->box);
+  { Box *nb = realloc(out->box, (out->nbox + 1) * sizeof *out->box); if (!nb) return tw + 2 * pad + 2 * gap + tracking; out->box = nb; }
   Box *bx = &out->box[out->nbox++]; bx->x = pen + gap; bx->y = mid - h / 2; bx->w = tw + 2 * pad; bx->h = h;
   return tw + 2 * pad + 2 * gap + tracking;
 }
